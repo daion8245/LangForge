@@ -3,24 +3,110 @@
     {
       "id": "gemini",
       "displayName": "Google Gemini",
-      "apiVersion": "v1beta",
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+      "translatePath": "/models/{model}:generateContent",
+      "authFields": [
+        {
+          "id": "apiKey",
+          "label": "Gemini API Key",
+          "isSecret": true,
+          "helpUrl": "https://aistudio.google.com/app/apikey",
+          "placeholder": "AIzaSy..."
+        }
+      ],
       "models": [
         {
           "id": "gemini-3.6-flash",
           "name": "Gemini 3.6 Flash",
           "isDefault": true,
-          "batchSize": 50,
           "description": "기본 · 품질 우선"
         },
         {
           "id": "gemini-3.5-flash-lite",
           "name": "Gemini 3.5 Flash Lite",
           "isDefault": false,
-          "batchSize": 50,
           "description": "대안 · 처리량·비용 우선"
         }
-      ]
+      ],
+      "limits": {
+        "maxTextsPerRequest": 25,
+        "maxCharsPerRequest": 8000,
+        "maxConcurrentRequests": 4,
+        "requestTimeoutSeconds": 30
+      }
+    },
+    {
+      "id": "deepl",
+      "displayName": "DeepL",
+      "endpoints": {
+        "free": "https://api-free.deepl.com/v2/translate",
+        "pro": "https://api.deepl.com/v2/translate"
+      },
+      "authFields": [
+        {
+          "id": "apiKey",
+          "label": "DeepL API Key",
+          "isSecret": true,
+          "helpUrl": "https://www.deepl.com/your-account/keys",
+          "placeholder": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx"
+        }
+      ],
+      "models": [],
+      "limits": {
+        "maxTextsPerRequest": 50,
+        "maxCharsPerRequest": 30000,
+        "maxConcurrentRequests": 4,
+        "requestTimeoutSeconds": 30
+      }
+    },
+    {
+      "id": "google",
+      "displayName": "Google Cloud Translation",
+      "baseUrl": "https://translation.googleapis.com/language/translate/v2",
+      "authFields": [
+        {
+          "id": "apiKey",
+          "label": "Cloud Translation API Key",
+          "isSecret": true,
+          "helpUrl": "https://console.cloud.google.com/apis/credentials",
+          "placeholder": "AIzaSy..."
+        }
+      ],
+      "models": [],
+      "limits": {
+        "maxTextsPerRequest": 50,
+        "maxCharsPerRequest": 30000,
+        "maxConcurrentRequests": 4,
+        "requestTimeoutSeconds": 30
+      }
+    },
+    {
+      "id": "papago",
+      "displayName": "Papago",
+      "baseUrl": "https://papago.apigw.ntruss.com/nmt/v1/translation",
+      "authFields": [
+        {
+          "id": "clientId",
+          "label": "Client ID",
+          "isSecret": false,
+          "helpUrl": "https://console.ncloud.com/naver-service/application",
+          "placeholder": "NCP Client ID"
+        },
+        {
+          "id": "clientSecret",
+          "label": "Client Secret",
+          "isSecret": true,
+          "helpUrl": "https://console.ncloud.com/naver-service/application",
+          "placeholder": "NCP Client Secret"
+        }
+      ],
+      "models": [],
+      "limits": {
+        "maxTextsPerRequest": 1,
+        "maxCharsPerRequest": 5000,
+        "maxConcurrentRequests": 4,
+        "requestTimeoutSeconds": 30
+      }
     }
   ]
 }

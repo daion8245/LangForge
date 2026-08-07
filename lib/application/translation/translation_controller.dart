@@ -2,8 +2,11 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../domain/cache/cache_hit_rate.dart';
 import '../../domain/provider/translation_provider.dart';
+import '../cache/cache_providers.dart';
 import '../db_provider.dart';
+import '../project/project_language_pair.dart';
 import '../project/project_session.dart';
 import 'translation_runner.dart';
 
@@ -15,6 +18,7 @@ class TranslationUiState {
     this.totalCount = 0,
     this.completedCount = 0,
     this.failedCount = 0,
+    this.cacheHitCount = 0,
     this.message,
   });
 
@@ -22,6 +26,7 @@ class TranslationUiState {
   final int totalCount;
   final int completedCount;
   final int failedCount;
+  final int cacheHitCount;
   final String? message;
 
   bool get isRunning => status == RunnerStatus.running;
@@ -34,6 +39,9 @@ class TranslationUiState {
   /// `null` rather than 0 when there is nothing to divide by, so no caller can
   /// render `NaN%` (DESIGN.md 14).
   double? get percent => totalCount == 0 ? null : completedCount / totalCount;
+
+  String get cacheHitRateLabel =>
+      CacheHitRate.format(hits: cacheHitCount, total: totalCount);
 }
 
 /// Owns the [TranslationRunner] for the session and exposes it to the UI.
@@ -54,15 +62,20 @@ class TranslationController extends Notifier<TranslationUiState> {
     required TranslationProvider provider,
     required AuthValues auth,
     required String model,
-    String sourceLang = 'en_us',
-    String targetLang = 'ko_kr',
     bool retryFailed = false,
   }) async {
     if (state.isActive) return;
 
+    final db = ref.read(appDatabaseProvider);
+    final langs = await ProjectLanguagePair.fromDb(db);
+    final glossary = ref.read(glossaryStoreProvider);
+    glossary?.attachProject(db);
+
     final runner = TranslationRunner(
-      db: ref.read(appDatabaseProvider),
+      db: db,
       provider: provider,
+      cacheStore: ref.read(translationCacheStoreProvider),
+      glossaryStore: glossary,
     );
     _runner = runner;
 
@@ -72,6 +85,7 @@ class TranslationController extends Notifier<TranslationUiState> {
         totalCount: progress.totalCount,
         completedCount: progress.completedCount,
         failedCount: progress.failedCount,
+        cacheHitCount: progress.cacheHitCount,
         message: progress.currentMessage,
       );
     });
@@ -80,8 +94,8 @@ class TranslationController extends Notifier<TranslationUiState> {
       await runner.startTranslation(
         auth: auth,
         model: model,
-        sourceLang: sourceLang,
-        targetLang: targetLang,
+        sourceLang: langs.sourceLang,
+        targetLang: langs.targetLang,
         retryFailed: retryFailed,
       );
     } finally {
@@ -94,6 +108,7 @@ class TranslationController extends Notifier<TranslationUiState> {
         totalCount: state.totalCount,
         completedCount: state.completedCount,
         failedCount: state.failedCount,
+        cacheHitCount: state.cacheHitCount,
         message: state.message,
       );
       // Completion, error, and cancellation all land here — the save points of

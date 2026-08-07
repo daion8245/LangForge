@@ -44,6 +44,10 @@ void main() {
         SensitiveFilter.scrub('X-NCP-APIGW-API-KEY: ncp_secret_value'),
         equals('X-NCP-APIGW-API-KEY: [REDACTED]'),
       );
+      expect(
+        SensitiveFilter.scrub('X-NCP-APIGW-API-KEY-ID: ncp_client_id_value'),
+        equals('X-NCP-APIGW-API-KEY-ID: [REDACTED]'),
+      );
     });
 
     test('Scrubs a DeepL key but leaves plain UUID row ids intact', () {

@@ -1,42 +1,34 @@
 import 'dart:convert';
+
 import 'package:http/http.dart' as http;
+
+import '../../domain/normalize/provider_language_code.dart';
 import '../../domain/provider/translation_error.dart';
 import '../../domain/provider/translation_provider.dart';
+import 'http_status_mapper.dart';
+import 'provider_definition.dart';
 
 class GeminiProvider implements TranslationProvider {
+  GeminiProvider({required this.definition, http.Client? client})
+    : _client = client ?? http.Client();
+
+  final ProviderDefinition definition;
   final http.Client _client;
 
-  GeminiProvider({http.Client? client}) : _client = client ?? http.Client();
+  @override
+  String get id => definition.id;
 
   @override
-  String get id => 'gemini';
+  String get displayName => definition.displayName;
 
   @override
-  String get displayName => 'Google Gemini';
+  List<AuthField> get authFields => definition.authFields;
 
   @override
-  List<AuthField> get authFields => const [
-    AuthField(
-      id: 'apiKey',
-      label: 'Gemini API Key',
-      isSecret: true,
-      helpUrl: 'https://aistudio.google.com/app/apikey',
-    ),
-  ];
+  List<String> get models => definition.models;
 
   @override
-  List<String> get models => const [
-    'gemini-3.6-flash',
-    'gemini-3.5-flash-lite',
-  ];
-
-  @override
-  BatchLimits get limits => const BatchLimits(
-    maxTextsPerRequest: 50,
-    maxCharsPerRequest: 8000,
-    maxConcurrentRequests: 4,
-    requestTimeout: Duration(seconds: 30),
-  );
+  BatchLimits get limits => definition.limits;
 
   static const String _instruction = '''
 You translate Minecraft mod UI strings from {source} to {target}.
@@ -47,7 +39,16 @@ Rules:
   reorder relative to surrounding words when grammatically avoidable, or remove them.
 - Do not add quotes, explanations, notes, or trailing punctuation that is not in the source.
 - Keep the register short and UI-appropriate. These are item names, tooltips, and messages.
-- If a string should not be translated (proper noun, mod name), return it unchanged.
+- Translate every item into {target}. Never return the whole input array unchanged.
+- Only an individual proper noun or mod name may be left unchanged — never most or all items.
+''';
+
+  static const String _userPreamble = '''
+Translate each string in the JSON array below from {source} to {target}.
+Return a JSON array of translated strings with the same length and order.
+Do not copy the input array back. Translate every ordinary UI string.
+
+Input:
 ''';
 
   @override
@@ -88,13 +89,20 @@ Rules:
     }
 
     final model = request.model ?? models.first;
-    final url = Uri.parse(
-      'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent',
-    );
+    final url = Uri.parse(definition.translateUrl(model: model));
+
+    final source = ProviderLanguageCode.map(id, request.sourceCode);
+    final target = ProviderLanguageCode.map(id, request.targetCode);
 
     final systemInstructionText = _instruction
-        .replaceAll('{source}', request.sourceCode)
-        .replaceAll('{target}', request.targetCode);
+        .replaceAll('{source}', source)
+        .replaceAll('{target}', target);
+
+    final userText =
+        _userPreamble
+            .replaceAll('{source}', source)
+            .replaceAll('{target}', target) +
+        jsonEncode(request.texts);
 
     final requestBody = {
       'systemInstruction': {
@@ -105,7 +113,7 @@ Rules:
       'contents': [
         {
           'parts': [
-            {'text': jsonEncode(request.texts)},
+            {'text': userText},
           ],
         },
       ],
@@ -140,35 +148,37 @@ Rules:
       throw const Cancelled();
     }
 
-    if (response.statusCode == 401 || response.statusCode == 403) {
-      throw const AuthError();
-    } else if (response.statusCode == 429) {
-      final retryHeader = response.headers['retry-after'];
-      Duration? retryAfter;
-      if (retryHeader != null) {
-        final sec = int.tryParse(retryHeader);
-        if (sec != null) retryAfter = Duration(seconds: sec);
-      }
-      throw RateLimited(retryAfter: retryAfter);
-    } else if (response.statusCode == 413) {
-      throw const PayloadTooLarge();
-    } else if (response.statusCode >= 500) {
-      throw ServerError(response.statusCode);
-    } else if (response.statusCode != 200) {
-      throw ServerError(
-        response.statusCode,
-        message: 'Gemini API 오류 (${response.statusCode}): ${response.body}',
-      );
-    }
+    final mapped = HttpStatusMapper.mapStatus(
+      response.statusCode,
+      headers: response.headers,
+      body: response.body,
+      providerLabel: 'Gemini',
+    );
+    if (mapped != null) throw mapped;
 
     try {
       final jsonResponse = jsonDecode(response.body) as Map<String, dynamic>;
+
+      final promptFeedback =
+          jsonResponse['promptFeedback'] as Map<String, dynamic>?;
+      final blockReason = promptFeedback?['blockReason'];
+      if (blockReason != null) {
+        throw InvalidResponse('Gemini prompt blocked: $blockReason');
+      }
+
       final candidates = jsonResponse['candidates'] as List<dynamic>?;
       if (candidates == null || candidates.isEmpty) {
         throw const InvalidResponse('Gemini 응답에 candidates 항목이 없습니다.');
       }
 
       final candidate = candidates.first as Map<String, dynamic>;
+      final finishReason = candidate['finishReason'] as String?;
+      if (finishReason != null &&
+          finishReason.toUpperCase() != 'STOP' &&
+          finishReason.toUpperCase() != 'FINISH_REASON_UNSPECIFIED') {
+        throw InvalidResponse('Gemini finishReason: $finishReason');
+      }
+
       final content = candidate['content'] as Map<String, dynamic>?;
       final parts = content?['parts'] as List<dynamic>?;
       if (parts == null || parts.isEmpty) {

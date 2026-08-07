@@ -43,6 +43,7 @@ class EditorShell extends StatefulWidget {
     this.onUpdateUserTranslation,
     this.onResetEntryToWait,
     this.onKeepSourceText,
+    this.onApproveConfirm,
     this.projectName = 'Untitled Project',
     this.isDirty = false,
     this.onNewProject,
@@ -57,8 +58,10 @@ class EditorShell extends StatefulWidget {
     this.isPaused = false,
     this.translationMessage,
     this.translationProgress,
+    this.cacheHitRateLabel = '—',
     this.scanMessage,
     this.rejectedSummary = const [],
+    this.onOpenGlossary,
   });
 
   final List<InputFile> inputFiles;
@@ -104,6 +107,7 @@ class EditorShell extends StatefulWidget {
   final void Function(String entryId, String newText)? onUpdateUserTranslation;
   final void Function(String entryId)? onResetEntryToWait;
   final void Function(String entryId)? onKeepSourceText;
+  final void Function(String entryId)? onApproveConfirm;
 
   /// Shown in the top bar and used as the default save file name (AC-10.9).
   final String projectName;
@@ -128,8 +132,12 @@ class EditorShell extends StatefulWidget {
 
   /// 0..1, or null while the total is unknown.
   final double? translationProgress;
+
+  /// Pre-formatted cache hit rate (`25%` or `—`).
+  final String cacheHitRateLabel;
   final String? scanMessage;
   final List<String> rejectedSummary;
+  final VoidCallback? onOpenGlossary;
 
   @override
   State<EditorShell> createState() => _EditorShellState();
@@ -305,6 +313,7 @@ class _EditorShellState extends State<EditorShell> {
                     onUpdateUserTranslation: widget.onUpdateUserTranslation,
                     onResetEntryToWait: widget.onResetEntryToWait,
                     onKeepSourceText: widget.onKeepSourceText,
+                    onApproveConfirm: widget.onApproveConfirm,
                     isTranslating: widget.isTranslating,
                   ),
           ),
@@ -322,6 +331,8 @@ class _EditorShellState extends State<EditorShell> {
       onStartTranslation: () => widget.onStartTranslation?.call(),
       onPauseTranslation: () => widget.onPauseTranslation?.call(),
       onResumeTranslation: widget.onResumeTranslation,
+      cacheHitRateLabel: widget.cacheHitRateLabel,
+      onOpenGlossary: widget.onOpenGlossary,
     );
 
     return Scaffold(
@@ -440,6 +451,7 @@ class _EditorShellState extends State<EditorShell> {
             fileCount: widget.inputFiles.length,
             namespaceCount: widget.namespaces.length,
             totalEntryCount: widget.totalEntryCount,
+            cacheHitRateLabel: widget.cacheHitRateLabel,
             statusMessage: widget.isTranslating
                 ? widget.translationMessage
                 : widget.scanMessage,

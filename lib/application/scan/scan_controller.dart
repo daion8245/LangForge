@@ -12,14 +12,22 @@ import '../../domain/model/entry_status.dart';
 import '../../domain/model/entry_status.dart' as model;
 import '../../domain/validation/conflict_detector.dart';
 import '../../domain/validation/existing_translation_classifier.dart';
-import '../../infrastructure/db/row_mappers.dart';
-import '../project/project_session.dart';
+import '../../domain/cache/cache_kind.dart';
+import '../../domain/glossary/glossary_policy.dart';
+import '../../domain/glossary/glossary_term.dart';
 import '../../infrastructure/archive/directory_reader.dart';
+import '../../infrastructure/cache/cache_hashes.dart';
+import '../../infrastructure/cache/translation_cache_store.dart';
 import '../../infrastructure/db/app_database.dart';
+import '../../infrastructure/db/row_mappers.dart';
 import '../../infrastructure/isolate/messages.dart';
 import '../../domain/provider/translation_provider.dart' show CancellationToken;
 import '../../infrastructure/isolate/worker_pool.dart';
+import '../cache/cache_providers.dart';
 import '../db_provider.dart';
+import '../project/project_language_pair.dart';
+import '../project/project_session.dart';
+import '../settings/engine_settings.dart';
 
 class ScanState {
   final bool isScanning;
@@ -196,6 +204,92 @@ class ScanController extends Notifier<ScanState> {
       ),
     );
     _session.markDirty();
+
+    if (trimmed.isNotEmpty) {
+      await _writeEntryCache(
+        entryId: entryId,
+        translation: text,
+        kind: CacheKind.userEdited,
+      );
+    }
+  }
+
+  /// Approves a `confirm` entry → `done` + [CacheKind.reviewed] (TECHNICAL 7.5).
+  Future<void> approveConfirm(String entryId) async {
+    final entry = await (_db.select(
+      _db.entries,
+    )..where((tbl) => tbl.id.equals(entryId))).getSingleOrNull();
+    if (entry == null) return;
+    if (entry.status != EntryStatus.confirm.wireName) return;
+
+    final resolved = entry.userTranslation ?? entry.newTranslation;
+    if (resolved == null) return;
+
+    await (_db.update(
+      _db.entries,
+    )..where((tbl) => tbl.id.equals(entryId))).write(
+      EntriesCompanion(
+        status: Value(EntryStatus.done.wireName),
+        userEdited: const Value(false),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+    _session.markDirty();
+    await _writeEntryCache(
+      entryId: entryId,
+      translation: resolved,
+      kind: CacheKind.reviewed,
+    );
+  }
+
+  /// Writes [kind] into the global cache using [ProjectMeta] language codes.
+  Future<void> _writeEntryCache({
+    required String entryId,
+    required String translation,
+    required CacheKind kind,
+  }) async {
+    final cache = ref.read(translationCacheStoreProvider);
+    if (cache == null) return;
+
+    final entry = await (_db.select(
+      _db.entries,
+    )..where((t) => t.id.equals(entryId))).getSingleOrNull();
+    if (entry == null) return;
+
+    final ns = await (_db.select(
+      _db.namespaces,
+    )..where((t) => t.id.equals(entry.namespaceId))).getSingleOrNull();
+    final langs = await ProjectLanguagePair.fromDb(_db);
+    final settings = ref.read(engineSettingsProvider);
+
+    final glossary = ref.read(glossaryStoreProvider);
+    glossary?.attachProject(_db);
+    final terms = glossary == null
+        ? const <GlossaryTerm>[]
+        : await glossary.mergedTerms();
+    final applicableTerms = GlossaryPolicy.applicable(
+      merged: terms,
+      sourceLang: langs.sourceLang,
+      targetLang: langs.targetLang,
+      namespaceName: ns?.name,
+    );
+
+    final key = TranslationCacheStore.buildKey(
+      sourceText: entry.sourceText,
+      sourceLangCode: langs.sourceLang,
+      targetLangCode: langs.targetLang,
+      providerId: settings.providerId,
+      modelId: settings.model,
+      glossaryFingerprint: CacheHashes.glossaryFingerprint(
+        GlossaryPolicy.fingerprintInputs(applicableTerms),
+      ),
+    );
+    await cache.put(
+      key: key,
+      kind: kind,
+      translation: translation,
+      sourceText: entry.sourceText,
+    );
   }
 
   Future<void> resetEntryToWait(String entryId) async {

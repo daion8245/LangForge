@@ -4,7 +4,7 @@
 > 무엇을 만드는지는 `PRODUCT.md`, 흐름과 수용 조건은 `EXPERIENCE.md`, 시각 설계는 `DESIGN.md`, 순서는 `ROADMAP.md` 를 참조하세요.
 
 - 문서 버전: 1.0
-- 최종 수정: 2026-08-07
+- 최종 수정: 2026-08-08
 - 범위: **MVP (Windows 데스크톱)**. 1.0 및 모바일 항목은 `[1.0]` · `[모바일]` 로 표시
 - 라이선스: **MIT**
 
@@ -168,7 +168,10 @@ lib/
 │
 ├── infrastructure/
 │   ├── db/
-│   │   ├── app_database.dart       Drift 정의
+│   │   ├── app_database.dart       Drift 정의 (프로젝트 · glossary_terms)
+│   │   ├── cache_database.dart     전역 cache.db               [1.0]
+│   │   ├── glossary_database.dart  전역 glossary.db            [1.0]
+│   │   ├── registry_database.dart
 │   │   ├── tables/
 │   │   ├── daos/
 │   │   └── migrations/
@@ -302,6 +305,7 @@ class ProjectMeta extends Table {
   TextColumn get mcVersion => text().withDefault(const Constant('1.20.1'))();
   TextColumn get packIconMode => text().withDefault(const Constant('default'))();
   TextColumn get packIconPath => text().nullable()();
+  TextColumn get conflictPriority => text().withDefault(const Constant('manual'))();
   TextColumn get togglesJson => text().withDefault(const Constant('{}'))();
 
   @override Set<Column> get primaryKey => {id};
@@ -400,6 +404,75 @@ class ExportRecords extends Table {
 
   @override Set<Column> get primaryKey => {id};
 }
+
+// glossary_terms ─ 프로젝트 용어집                          [1.0]
+// 전역 glossary.db 와 동일 컬럼. 같은 (sourceTerm, 언어쌍, namespace) 충돌 시
+// 프로젝트 행이 전역을 덮는다. 7.5절 참조.
+class GlossaryTerms extends Table {
+  TextColumn get id => text()();
+  TextColumn get sourceTerm => text()();
+  TextColumn get targetTerm => text()();
+  TextColumn get sourceLang => text()();              // 정규화 내부 코드 (en_us)
+  TextColumn get targetLang => text()();
+  TextColumn get namespace => text().nullable()();    // null = 전체
+  BoolColumn get caseSensitive => boolean().withDefault(const Constant(false))();
+  TextColumn get note => text().nullable()();
+  DateTimeColumn get updatedAt => dateTime()();
+
+  @override Set<Column> get primaryKey => {id};
+}
+```
+
+### 3.2a Drift 스키마 (전역 DB) `[1.0]`
+
+`%APPDATA%\LangForge\cache.db` 와 `glossary.db`. 프로젝트와 수명이 분리된다.
+
+```dart
+// cache.db ─ 전역 번역 캐시. 키 8요소는 7.5절.
+enum CacheKind { auto, reviewed, userEdited }
+
+class CacheEntries extends Table {
+  // ── 캐시 키 8요소 (복합 유니크. kind 는 키에 포함하지 않음) ──
+  TextColumn get sourceHash => text()();             // SHA-256(원문, 치환 전)
+  TextColumn get sourceLangCode => text()();
+  TextColumn get targetLangCode => text()();
+  TextColumn get providerId => text()();
+  TextColumn get modelId => text()();                // 없으면 ""
+  TextColumn get glossaryFingerprint => text()();    // 적용 대상 용어만의 SHA-256
+  TextColumn get protectorVersion => text()();
+  TextColumn get postProcessorVersion => text()();
+
+  // ── 값 ──
+  TextColumn get kind => text()();                   // CacheKind wire name
+  TextColumn get translation => text()();
+  TextColumn get sourceText => text()();             // 디버그용. 키에는 쓰지 않음
+  DateTimeColumn get updatedAt => dateTime()();
+
+  // 같은 8요소에 kind 가 여러 개일 수 있다 (auto · reviewed · userEdited).
+  @override Set<Column> get primaryKey => {
+    sourceHash, sourceLangCode, targetLangCode, providerId, modelId,
+    glossaryFingerprint, protectorVersion, postProcessorVersion, kind,
+  };
+}
+
+// glossary.db ─ 전역 용어집. 프로젝트 GlossaryTerms 와 동일 컬럼.
+class GlossaryTerms extends Table { /* 3.2 와 동일 */ }
+```
+
+```sql
+-- cache.db
+CREATE UNIQUE INDEX idx_cache_key8 ON cache_entries(
+  source_hash, source_lang_code, target_lang_code, provider_id, model_id,
+  glossary_fingerprint, protector_version, post_processor_version, kind
+);
+CREATE INDEX idx_cache_lookup ON cache_entries(
+  source_hash, source_lang_code, target_lang_code, provider_id, model_id,
+  glossary_fingerprint, protector_version, post_processor_version
+);
+
+-- glossary.db · 프로젝트 glossary_terms
+CREATE INDEX idx_glossary_lang ON glossary_terms(source_lang, target_lang);
+CREATE INDEX idx_glossary_ns   ON glossary_terms(namespace);
 ```
 
 ### 3.3 인덱스
@@ -436,7 +509,34 @@ enum EntryStatus {
 
 enum NamespaceState { ok, noSource, jsonError, conflicted, excluded, done }
 enum ScanState { pending, ok, rejected, missing, changed }
+
+// 충돌 우선순위 (10.2 · 10.5). ProjectMeta.conflictPriority 에 wire name 으로 저장.
+enum ConflictPriority {
+  manual,              // 항상 수동 선택. 기본값
+  preferFirstAdded,    // 먼저 추가된 JAR 의 원문
+  preferLastAdded,     // 나중에 추가된 JAR 의 원문
+  preferLongerSource,  // 원문이 더 긴 쪽
+  preferShorterSource, // 원문이 더 짧은 쪽
+}
 ```
+
+`manual` 외 네 단계는 **미리선택만** 합니다. 충돌 목록을 열었을 때 후보 하나가 이미 선택된 상태로 보이는 것이 전부이고, `Conflicts.resolved` 는 사용자가 S11 에서 확인 버튼을 누른 뒤에만 `true` 가 됩니다. 미해결 충돌이 남아 있으면 출력은 계속 차단됩니다 (AC-8.5 · 8.6).
+
+동점 처리: `preferLongerSource` · `preferShorterSource` 는 길이(Dart `String.length`, UTF-16 코드 단위)가 같으면 `preferFirstAdded` 로 떨어집니다. `preferFirstAdded` · `preferLastAdded` 의 순서 기준은 `InputFiles.addedAt` 이며, 같으면 `InputFiles.id` 사전순입니다. 미리선택은 결정론적이어야 합니다.
+
+**`ProjectMeta.togglesJson` 키 (10.3)**
+
+```jsonc
+{
+  "autoSave": true,          // 자동 저장
+  "verboseLog": false,       // 상세 로그 (FINE). 앱 내 로그 뷰어와 연동
+  "notifyOnComplete": true,  // 번역 완료 시 소리·알림
+  "keepOnRescan": true,      // 재탐색 시 기존 번역 유지 — AC-10.7
+  "allowSkipChecks": false   // 출력 전 검사 건너뛰기 허용 — E3
+}
+```
+
+키가 없으면 위 기본값을 씁니다. 알 수 없는 키는 읽을 때 무시하되 다시 쓸 때 보존합니다 — 구버전 앱이 신버전 프로젝트의 설정을 지우지 않게 합니다.
 
 DB 에는 문자열로 저장합니다. 정수 인덱스는 열거형 순서가 바뀌면 데이터가 깨집니다.
 
@@ -498,6 +598,8 @@ MVP 는 v1 하나만 존재하지만 이 골격은 처음부터 넣는다.
 ```
 
 `aliases` 가 언어 코드 정규화의 입력이 됩니다.
+
+수록 언어는 6종입니다 — `ko_kr` · `en_us` · `en_gb` · `ja_jp` · `de_de` · `fr_fr`. 대상 언어 선택 UI (ROADMAP 11.1) 는 이 파일을 그대로 읽습니다. 언어를 늘리려면 이 파일에 항목을 추가하면 되고, 코드 변경은 필요 없습니다.
 
 ---
 
@@ -808,12 +910,24 @@ bool isTokenOnly(String s) => s.replaceAll(tokenPattern, '').trim().isEmpty;
 4. 번역기가 붙인 불필요한 따옴표 제거 ("번역결과" → 번역결과)
 5. Unicode NFC 정규화
 6. 제어 문자 제거 (원문에 같은 문자가 있으면 유지)
-7. 용어집 최종 적용                                    [1.0]
+7. 용어집 위반 검출 (자동 치환 없음)                   [1.0]
 
 원문 의미를 확장하지 않는다. key 는 어떤 단계에서도 건드리지 않는다.
 2~6 은 `TextPostProcessor.process()` 하나에서 이 순서대로 실행된다.
 3 이 4 보다 먼저다. `  "번역"  ` 처럼 여백과 따옴표가 겹치면 여백을 먼저 걷어내야
 따옴표가 문자열 양 끝으로 온다.
+
+**7단계 — 용어집 위반 검출 `[1.0]`**
+
+```text
+자동 치환하지 않는다. 한국어 조사·어미를 깨뜨리기 쉽다.
+검출만 하고, 위반이면 항목 상태를 confirm 으로 두어 사용자가 편집기에서 고친다.
+
+위반 조건 (둘 다 참일 때만)
+  원문에 sourceTerm 포함  AND  결과에 targetTerm 없음
+
+부분 일치 사전 치환(번역 전)도 금지. 번역 전 API 생략은 원문 완전 일치만 (7.5절).
+```
 
 **6단계의 판정 기준**
 
@@ -884,10 +998,20 @@ class BatchLimits {
 
 | 제공자 | 인증 필드 | 엔드포인트 | 인증 전달 |
 |---|---|---|---|
-| **Gemini** (MVP) | API Key, 모델 | `POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent` | `x-goog-api-key` 헤더 |
-| DeepL **[1.0]** | API Key, Free/Pro 엔드포인트 | `POST https://api-free.deepl.com/v2/translate` 또는 `https://api.deepl.com/v2/translate` | `Authorization: DeepL-Auth-Key {key}` |
-| Google Cloud Translation **[1.0]** | API Key, (선택) 서비스 계정 JSON | Cloud Translation API | API Key 또는 OAuth |
-| Papago **[1.0]** | Client ID, Client Secret | Naver Cloud Platform NMT | `X-NCP-APIGW-API-KEY-ID` / `X-NCP-APIGW-API-KEY` |
+| **Gemini** (MVP) | API Key, 모델 | `POST {baseUrl}/models/{model}:generateContent` (`baseUrl` = `https://generativelanguage.googleapis.com/v1beta`) | `x-goog-api-key` 헤더 |
+| DeepL **[1.0]** | API Key | Free: `POST https://api-free.deepl.com/v2/translate` · Pro: `POST https://api.deepl.com/v2/translate`. 키 접미사 `:fx` 이면 Free | `Authorization: DeepL-Auth-Key {key}` |
+| Google Cloud Translation **[1.0]** | API Key (서비스 계정 JSON 은 보류) | `POST https://translation.googleapis.com/language/translate/v2` (Basic / v2) | `x-goog-api-key` 헤더 |
+| Papago **[1.0]** | Client ID, Client Secret | `POST https://papago.apigw.ntruss.com/nmt/v1/translation` (NCP Papago NMT) | `X-NCP-APIGW-API-KEY-ID` / `X-NCP-APIGW-API-KEY` |
+
+**오류 매핑 보충 (Phase 8)**
+
+| HTTP | 분류 |
+|---|---|
+| 401 · 403 | `AuthError` |
+| 429 | `RateLimited` (`Retry-After` 있으면 우선) |
+| 413 | `PayloadTooLarge` |
+| 456 (DeepL 할당량) | `QuotaExhausted` |
+| 5xx | `ServerError` |
 
 **API 키를 URL 쿼리 파라미터로 보내지 않습니다.** 항상 헤더로 보냅니다. 쿼리 파라미터는 프록시 로그·에러 메시지·리다이렉트에 남습니다.
 
@@ -933,18 +1057,22 @@ Rules:
   reorder relative to surrounding words when grammatically avoidable, or remove them.
 - Do not add quotes, explanations, notes, or trailing punctuation that is not in the source.
 - Keep the register short and UI-appropriate. These are item names, tooltips, and messages.
-- If a string should not be translated (proper noun, mod name), return it unchanged.
+- Translate every item into {target}. Never return the whole input array unchanged.
+- Only an individual proper noun or mod name may be left unchanged — never most or all items.
 ''';
+
+// user 파트에는 번역 지시를 명시한 뒤 JSON 배열을 붙인다.
+// 배열만 보내면 모델이 입력을 통째로 되돌리는 원문 에코가 관찰됐다.
 ```
 
-**LLM 번역은 항상 검증을 통과해야 합니다.** 프롬프트로 지시했다고 신뢰하지 않고, 5.3절의 멀티셋 검증으로 기계적으로 확인합니다.
+**LLM 번역은 항상 검증을 통과해야 합니다.** 프롬프트로 지시했다고 신뢰하지 않고, 5.3절·7.3절의 검증으로 기계적으로 확인합니다. `finishReason`/`promptFeedback.blockReason` 이상도 `InvalidResponse` 로 승격합니다.
 
 ### 6.4 대기열과 동시성
 
 ```dart
 class TranslationRunner {
   static const _maxConcurrent = 4;       // 제공자 limits 로 덮어씀
-  static const _batchSize = 50;          // 제공자 limits 로 덮어씀
+  static const _batchSize = 25;          // 제공자 limits 로 덮어씀 (Q2 임시값)
 
   // 상태: idle | running | paused | cancelling
 }
@@ -1011,17 +1139,26 @@ API 호출 실패도 최종 항목 상태는 별도 오류 열거형을 만들�
 ### 7.1 병합 우선순위
 
 ```dart
-String? resolveFinal(TranslationEntry e) {
+String resolveFinal(TranslationEntry e) {
   if (e.userTranslation != null)      return e.userTranslation;      // 1
   if (e.existingTranslation != null)  return e.existingTranslation;  // 2
-  // 3. 프로젝트 용어집                                                 [1.0]
-  // 4. 검수된 번역 캐시                                                [1.0]
+  if (e.glossaryTranslation != null)  return e.glossaryTranslation;  // 3  [1.0]
+  if (e.reviewedCacheTranslation != null)                            // 4  [1.0]
+    return e.reviewedCacheTranslation;  // CacheKind.reviewed | userEdited 만
   if (e.newTranslation != null)       return e.newTranslation;       // 5
   return e.sourceText;                                               // 6 원문 유지
 }
 ```
 
-**기존 번역 전체를 자동 번역으로 덮어쓰지 않습니다.** 이 함수는 순수 함수로 만들어 단위 테스트로 전수 검증합니다.
+| 단계 | 후보 | 비고 |
+|---|---|---|
+| 3 | 용어집 (전역∪프로젝트, 프로젝트 우선) | 원문 **완전 일치**로 채운 값. 부분 일치 금지 |
+| 4 | 검수된 번역 캐시 | `CacheKind.reviewed` · `userEdited` 만. `auto` 금지 |
+| 5 | 새 자동 번역 | 제공자 응답 **또는** `CacheKind.auto` 적중 (`status = cache`, `newTranslation` 채움) |
+
+`auto` 캐시가 4단계에 오면 기존 번역(2단계)을 이기지 못하는 보장이 깨집니다. `auto` 적중은 5단계 자리에 넣고 `status = cache` 로 표시합니다.
+
+**기존 번역 전체를 자동 번역으로 덮어쓰지 않습니다.** 이 함수는 순수 함수로 만들어 단위 테스트로 전수 검증합니다. 후보 5필드(user · existing · glossary · reviewedCache · new) × 없음/빈/값 = 243 조합.
 
 ### 7.2 기존 번역 분류
 
@@ -1042,9 +1179,12 @@ String? resolveFinal(TranslationEntry e) {
 항목 단위
 ├── 보호 토큰 멀티셋 일치
 ├── 남은 자리표시자 없음
-├── 빈 번역 아님 (원문이 비었을 때 제외)
-├── 비정상 제어 문자 없음
-└── 길이가 비정상적으로 크지 않음 (원문의 10배 초과 시 경고)
+├── 빈 번역 아님 (원문이 비었을 때 제외) → invalid, 값 미저장
+├── 비정상 제어 문자 없음 → invalid, 값 미저장
+├── 길이가 비정상적으로 크지 않음 (원문의 10배 초과) → invalid, 값 미저장
+├── 배치(|batch| > 1) 원문 에코율 ≥ 90% → 배치 실패로 분할 재시도
+├── 부분 에코 → 에코 항목만 재배치 1회 후 단건 재시도
+└── 단건(|batch| == 1) 원문 에코 → fallback(원문 유지). done 으로 저장하지 않음
 
 파일 단위 (출력 직전)
 ├── JSON 문법 유효
@@ -1056,6 +1196,12 @@ String? resolveFinal(TranslationEntry e) {
 ├── 파일명이 대상 언어 프로필의 outputFile 과 일치
 └── 경로가 assets/{ns}/lang/{file} 형태
 ```
+
+이미 `done` 으로 저장된 원문 에코(`newTranslation == sourceText`)는 번역 시작 시 `wait` 로 되돌린다. 범위는 **대기열이 실제로 다시 보낼 수 있는 네임스페이스로 한정**한다 — 제외·미선택 네임스페이스까지 되돌리면 값만 지운 채 영구히 `대기` 로 남는다.
+
+러너가 확정한 `fallback`(`sourceEcho`) 은 `실패 항목 다시 시도` 일 때만 `wait` 로 되돌린다. 매 실행마다 쓸어담으면 번역 불가 문자열에 반복 과금된다. 사용자가 직접 지정한 원문 유지(`userEdited`)와 제외 값의 `fallback` 은 어느 경우에도 건드리지 않는다.
+
+배치 에코로 분할 재시도할 때 하위 배치는 `rebatch` 단계를 물려받는다. `initial` 로 되돌리면 이진 분할 트리가 전개되어 요청 수가 배로 늘어난다(전량 에코 100키 기준 196회 → 112회).
 
 ### 7.4 출력 차단 판정
 
@@ -1076,6 +1222,88 @@ enum BlockReason {
 ```
 
 앞의 5개는 사용자가 무시할 수 없습니다. 뒤의 2개만 정책 선택이 가능합니다.
+
+### 7.5 캐시와 용어집 `[1.0]`
+
+#### 캐시 키 8요소
+
+하나라도 다르면 미적중. 키에는 원문 raw 를 넣지 않고 해시만 쓴다.
+
+| # | 요소 | 계산 |
+|---|---|---|
+| 1 | `sourceHash` | `SHA-256(원문)` — 토큰 치환 **전** raw. `sourceText` 컬럼은 디버그용 |
+| 2 | `sourceLangCode` | 정규화 내부 코드 (`en_us`). `ProviderLanguageCode` 적용 전 |
+| 3 | `targetLangCode` | 동일 |
+| 4 | `providerId` | `gemini` · `deepl` · `google` · `papago` |
+| 5 | `modelId` | 없으면 `""`. 엔진 옵션은 `TranslationRequest` 의 model/auth 뿐 |
+| 6 | `glossaryFingerprint` | 아래 지문 규칙 |
+| 7 | `protectorVersion` | 토큰 치환 규칙 버전 상수 (`TokenProtector.version`) |
+| 8 | `postProcessorVersion` | §5.5 1~6단계 규칙 버전 상수 (`TextPostProcessor.version`) |
+
+**8번이 namespace 가 아닌 이유.** 캐시 가치는 모드 간 재사용이다. namespace 를 키에 넣으면 "Copper Ingot" 이 모드 A에서만 적중하고 전역 캐시가 무력화된다. 모드별 용어 차이는 6번(`glossaryFingerprint`)이 namespace 스코프 용어집으로 흡수한다. 후처리 규칙이 바뀌면 저장 결과가 낡으므로 8번은 `postProcessorVersion` 이다.
+
+**glossaryFingerprint**
+
+```text
+1. 전역 용어집 ∪ 프로젝트 용어집 (같은 term·언어쌍·스코프면 프로젝트 승)
+2. 현재 언어쌍에 해당하는 행만
+3. 항목에 적용 가능한 스코프만 (namespace 일치 또는 namespace == null)
+4. (sourceTerm, targetTerm, namespace, caseSensitive) 로 정렬
+5. 정규화 문자열을 SHA-256
+```
+
+전체 용어집 해시로 계산하지 않는다. 무관한 용어 하나가 바뀌어도 캐시가 전멸하기 때문이다.
+
+#### CacheKind 와 조회·쓰기
+
+```dart
+enum CacheKind { auto, reviewed, userEdited }
+```
+
+| 종류 | API 스킵 | MergePolicy | 쓰기 시점 |
+|---|---|---|---|
+| `auto` | ✓ | 5단계 (`newTranslation` + `status=cache`) | `done` 확정 시 |
+| `reviewed` | ✓ | 4단계 | 편집기 `승인` (`approveConfirm`) 시 |
+| `userEdited` | ✓ | 4단계 | 사용자 직접 수정 저장 시 |
+
+용어집 이중 소스: 번역 시 `glossaryExact` 로 저장된 값은 **스냅샷**으로 MergePolicy 3단계에 넣고, 용어집을 나중에 고쳐도 출력과 편집기가 갈라지지 않는다. `wait` 등 미저장 행만 용어집 **라이브** 완전일치를 쓴다.
+
+같은 8요소에 여러 kind 가 있으면 조회 우선순위는 `userEdited` > `reviewed` > `auto`.
+`invalid` 결과는 캐시에 쓰지 않는다 (AGENTS 2.1).
+
+#### 용어집 적용
+
+```text
+저장
+├── 전역  %APPDATA%\LangForge\glossary.db
+└── 프로젝트  .lfproj → glossary_terms
+    충돌 (sourceTerm, 언어쌍, namespace) → 프로젝트가 전역을 덮음
+
+번역 전 API 생략
+└── trim 후 원문 전체 == sourceTerm (caseSensitive 플래그 존중)
+    → API 호출 없음. glossaryTranslation 채움. status = done.
+    부분 일치는 번역 전 치환하지 않는다.
+
+번역 후 (§5.5 7단계)
+└── 원문에 sourceTerm 포함 AND 결과에 targetTerm 없음 → confirm
+    자동 치환 없음.
+```
+
+#### 버전 상수
+
+```dart
+// 규칙이 바뀌면 숫자를 올린다. 캐시 키가 갈라져 구 결과가 자동 무효화된다.
+abstract final class TokenProtector {
+  static const version = '1';
+}
+abstract final class TextPostProcessor {
+  static const version = '1';
+}
+```
+
+#### 적중률 표시
+
+대상 항목 0개이면 `—`. `NaN%` · `Infinity` · 빈 문자열 금지 (AGENTS 5.3).
 
 ---
 
@@ -1181,6 +1409,12 @@ Windows 에서 만들면 경로 구분자가 `\` 가 되기 쉽습니다. ZIP �
 packIconMode (3.2)
 ├── default   번들 아이콘
 ├── custom    사용자가 고른 PNG. 읽기 실패 시 번들 아이콘으로 대체한다
+│             검증: PNG · 정사각형 · 64x64 이상 1024x1024 이하 · 손상 없음
+├── mod       JAR 내부 아이콘 추출 → 정사각형 크롭 → 128x128 리사이즈
+│             탐색 순서: pack.png, icon.png, logo.png, META-INF/mods.toml 의
+│             logoFile, fabric.mod.json 의 icon.
+│             여러 JAR 이면 첫 번째로 성공한 것을 쓴다.
+│             실패 시 default 로 폴백한다
 └── none      pack.png 없이 출력. Minecraft 는 아이콘 없는 팩도 받아들인다
 
 아이콘은 장식이다. 아이콘 문제로 출력 전체를 실패시키지 않는다.
@@ -1410,7 +1644,7 @@ FTS5 전문 검색      LIKE 로 시작. 실측에서 느리면 그때 추가.
 | `MultisetValidator` | 5.3절 판정 예시 전부 + 개수 불일치 + 순서만 다른 경우(통과해야 함) |
 | `LanguageCodeNormalizer` | `ko-KR` `KO_KR` `Korean` `한국어` `ko` → `ko_kr`. 알 수 없는 코드 처리 |
 | `ResourcePathParser` | 정상 경로, 깊이 초과, 확장자 불일치, 대문자 namespace, 역슬래시 |
-| `MergePolicy` | 6단계 우선순위의 모든 조합. 각 후보가 없음·빈 문자열·값 있음 3상태이므로 3^3 = 27 케이스 |
+| `MergePolicy` | 6단계 우선순위. 후보 5필드(user · existing · glossary · reviewedCache · new) × 없음/빈/값 = 243 케이스. `auto` 캐시는 4단계가 아니라 5단계(`newTranslation`)임을 별도 검증 |
 | `ExistingTranslationClassifier` | 7.2 표의 6행 각각 + 오래된 key 추출 |
 | `TextPostProcessor` | 따옴표·연속 공백·앞뒤 공백·제어 문자·NFC. 각 단계가 원문에 있으면 유지하는지 |
 | `ExclusionPolicy` | URL·리소스경로·명령어·UUID·숫자·토큰전용·빈문자열 |
@@ -1689,10 +1923,19 @@ LangForge-{version}-windows-x64.zip
 
 | # | 질문 | 결정 시점 |
 |---|---|---|
-| Q1 | 자리표시자 `⁣LF0⁣` (U+2063) 를 각 엔진이 실제로 보존하는지 — 실측 필요. 보존하지 않으면 대체 형태 탐색 | Phase 3 시작 시 |
-| Q2 | Gemini 배치 크기 최적값 (50 은 추정치). 응답 품질·속도·개수 불일치율을 측정해 조정 | Phase 3 |
+| Q1 | 자리표시자 `⁣LF0⁣` (U+2063) 를 각 엔진이 실제로 보존하는지 — 프로브 골격 `tool/probe_placeholder.dart`. 실키 `--live` 결과로 아래 표를 채운다. 실패 엔진은 대체 형태(`placeholderStyle`) 탐색 | Phase 8 (실측 대기) |
+
+**Q1 실측 표** (`dart run tool/probe_placeholder.dart --live` 후 갱신)
+
+| Provider | unit (U+2063) 통과율 | 비고 |
+|---|---|---|
+| gemini | — (미실측) | |
+| deepl | — (미실측) | 실패 시 `tag_handling:xml` + `<lf i="n"/>` 후보 |
+| google | — (미실측) | 실패 시 `format:html` + `<span translate="no">` 후보 |
+| papago | — (미실측) | 실패 시 변수 포함 문자열 미지원으로 제외 검토 |
+| Q2 | Gemini 배치 크기 최적값. 원문 에코 재발 완화로 임시 25 적용. 응답 품질·속도·개수 불일치율·에코율을 실측해 재조정 | Phase 3 |
 | Q3 | 검색이 `LIKE` 로 충분한지, FTS5 가 필요한지 | Phase 1 실측 후 |
 | Q4 | Isolate 풀 크기 4 가 적절한지 (IO 바운드 비중에 따라 다름) | Phase 1 실측 후 |
-| Q5 | DeepL·Google·Papago 의 현재 엔드포인트와 인증 방식 (문서가 자주 바뀜) | Phase 6 |
+| Q5 | ~~DeepL·Google·Papago 의 현재 엔드포인트와 인증 방식~~ → Phase 8.1 에서 확정. 아래 6.2절·`providers.json` 참조 | ✅ Phase 8 |
 | Q7 | 코드 서명 인증서를 도입할 것인가 (SmartScreen 경고 제거) | 1.0 이후 |
 | Q8 | `.lfproj` 를 SQLite 그대로 둘지, 압축 컨테이너로 감쌀지 | Phase 6 |

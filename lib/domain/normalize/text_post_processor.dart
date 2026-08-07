@@ -7,9 +7,12 @@ import 'text_normalizer.dart';
 /// translator added, and never adds meaning the source did not have. When in
 /// doubt about whether something came from the source, it is preserved.
 abstract final class TextPostProcessor {
+  /// Bump when steps 1–6 change so cache keys diverge (TECHNICAL 7.5).
+  static const String version = '1';
+
   /// Runs steps 2–6 of TECHNICAL.md 5.5. Step 1 (placeholder restoration) has
-  /// already happened by the time this is called, and step 7 (glossary) is
-  /// [1.0].
+  /// already happened by the time this is called, and step 7 (glossary
+  /// violation detect, no auto-replace) is [1.0].
   ///
   /// [normalizer] performs step 5. It defaults to doing nothing so that pure
   /// domain tests need no wiring; the running app injects a real one.

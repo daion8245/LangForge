@@ -28,6 +28,18 @@ abstract final class ProjectPaths {
     return File(p.join(dir.path, 'registry.db'));
   }
 
+  /// Global translation cache (`TECHNICAL.md` 3.1 · 7.5).
+  static Future<File> cacheFile() async {
+    final dir = await appDataDirectory();
+    return File(p.join(dir.path, 'cache.db'));
+  }
+
+  /// Global glossary (`TECHNICAL.md` 3.1 · 7.5).
+  static Future<File> glossaryFile() async {
+    final dir = await appDataDirectory();
+    return File(p.join(dir.path, 'glossary.db'));
+  }
+
   static Future<Directory> logsDirectory() async {
     final dir = await appDataDirectory();
     final logs = Directory(p.join(dir.path, 'logs'));

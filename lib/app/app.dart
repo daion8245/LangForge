@@ -9,8 +9,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:window_manager/window_manager.dart';
 
+import '../application/cache/cache_providers.dart';
 import '../application/db_provider.dart';
 import '../application/entries/entries_page_controller.dart';
+import '../application/merge/merge_hydrator.dart';
+import '../application/project/project_language_pair.dart';
 import '../application/project/project_session.dart';
 import '../application/scan/scan_controller.dart';
 import '../application/settings/engine_settings.dart';
@@ -25,6 +28,7 @@ import '../presentation/common/close_confirmation_dialog.dart';
 import '../presentation/editor/editor_shell.dart';
 import '../presentation/empty/empty_project_view.dart';
 import '../presentation/export/export_modal_view.dart';
+import '../presentation/glossary/glossary_screen.dart';
 import '../presentation/start/start_screen_view.dart';
 import 'shortcuts.dart';
 import 'theme/lf_colors.dart';
@@ -415,6 +419,13 @@ class _ProjectWorkspaceState extends ConsumerState<ProjectWorkspace> {
     await _session.rename(name);
   }
 
+  Future<void> _openGlossary() async {
+    if (!mounted) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => const GlossaryScreen()),
+    );
+  }
+
   /// `Ctrl+R`.
   void _startTranslation() {
     if (_isTranslating) return;
@@ -575,6 +586,8 @@ class _ProjectWorkspaceState extends ConsumerState<ProjectWorkspace> {
                     isPaused: translationState.isPaused,
                     translationMessage: translationState.message,
                     translationProgress: translationState.percent,
+                    cacheHitRateLabel: translationState.cacheHitRateLabel,
+                    onOpenGlossary: () => unawaited(_openGlossary()),
                     onAddFiles: () => unawaited(_addFiles()),
                     onAddFolder: () => unawaited(_addFolder()),
                     onRescan: () => unawaited(_rescan()),
@@ -592,6 +605,8 @@ class _ProjectWorkspaceState extends ConsumerState<ProjectWorkspace> {
                         unawaited(_scan.resetEntryToWait(id)),
                     onKeepSourceText: (id) =>
                         unawaited(_scan.keepSourceText(id)),
+                    onApproveConfirm: (id) =>
+                        unawaited(_scan.approveConfirm(id)),
                     isScanning: scanState.isScanning,
                     scanMessage: scanState.currentStatusMessage,
                     rejectedSummary: banners,
@@ -626,10 +641,19 @@ class _ProjectWorkspaceState extends ConsumerState<ProjectWorkspace> {
     // Export is the one operation that legitimately needs every row.
     final inputFiles = await db.select(db.inputFiles).get();
     final namespaces = await db.select(db.namespaces).get();
-    final allEntries = await db
-        .select(db.entries)
-        .get()
-        .then((rows) => rows.toDomain());
+    final entryRows = await db.select(db.entries).get();
+    final engine = ref.read(engineSettingsProvider);
+    final langs = await ProjectLanguagePair.fromDb(db);
+    final hydrator = MergeHydrator(
+      db: db,
+      cacheStore: ref.read(translationCacheStoreProvider),
+      glossaryStore: ref.read(glossaryStoreProvider),
+      sourceLang: langs.sourceLang,
+      targetLang: langs.targetLang,
+      providerId: engine.providerId,
+      modelId: engine.model,
+    );
+    final allEntries = await hydrator.hydrateAll(entryRows);
     final unresolvedConflicts = await (db.select(
       db.conflicts,
     )..where((t) => t.resolved.equals(false))).get();
@@ -657,7 +681,6 @@ class _ProjectWorkspaceState extends ConsumerState<ProjectWorkspace> {
                 ExportFormatOption.namespaceJson => ExportFormat.namespaceJson,
               };
 
-              final engine = ref.read(engineSettingsProvider);
               try {
                 final outputPath = await ResourcePackExporter.export(
                   targetDirPath: outputDir,
@@ -668,9 +691,9 @@ class _ProjectWorkspaceState extends ConsumerState<ProjectWorkspace> {
                   packFormat: packFormat,
                   providerName: engine.provider.displayName,
                   modelName: engine.model,
-                  sourceLangCode: 'en_us',
-                  targetLangCode: 'ko_kr',
-                  outputFileName: 'ko_kr.json',
+                  sourceLangCode: langs.sourceLang,
+                  targetLangCode: langs.targetLang,
+                  outputFileName: langs.outputFileName,
                   appVersion: appVersion,
                   staleKeysByNamespace: scanState.staleKeysByNamespace,
                   packIconBytes: packIcon,

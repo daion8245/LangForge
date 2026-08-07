@@ -4,7 +4,7 @@
 > 화면 흐름과 수용 조건은 `EXPERIENCE.md`, 구현은 `TECHNICAL.md` 를 참조하세요.
 
 - 문서 버전: 1.0
-- 최종 수정: 2026-08-07
+- 최종 수정: 2026-08-08
 - 기준: `LangForge v2 PC` · `LangForge Mobile` HTML 목업에서 추출한 실측값
 - 범위: **다크 모드 전용**. 라이트 모드는 만들지 않음
 
@@ -1002,6 +1002,26 @@ Tab 순서는 최근 프로젝트 최신순 → `새 프로젝트` → `프로�
         │        520px · 행 높이 44px · 구분선 #242424   │
         └────────────────────────────────────────────────┘
 ```
+
+### 11.4 용어집 관리 (S12) `[1.0]`
+
+새 컴포넌트를 만들지 않는다. 기존 토큰·위젯만 조합한다 (`EXPERIENCE.md` S12).
+
+```text
+전체 화면     surface.base. 편집기 위 오버레이가 아니라 라우트 전환
+헤더          높이 size.topBar · 좌 title "용어집" · 우 LfButton tertiary "닫기"
+탭            LfTabBar — [전역] [프로젝트]. 프로젝트 미개방 시 프로젝트 탭 비활성
+필터 행       LfSelect(언어쌍) + LfTextField(search). 간격 space.5
+목록          ListView.builder 가상화. 행 높이 size.rowMd
+              열: 원문 · 번역 · 스코프 · 대소문자 · (메모는 말줄임)
+행 호버       surface.raisedHover. 행 클릭 → 수정 인라인 또는 모달(LfModal)
+빈 목록       LfEmptyState — "등록된 용어가 없습니다" + `추가`
+하단 액션     LfButton primary "추가"
+삭제          S9 확인 대화상자 패턴
+CSV           없음
+```
+
+포인트 색은 헤더/탭 활성·primary 버튼에만 쓴다 (화면당 3~5곳 규칙).
 
 ---
 

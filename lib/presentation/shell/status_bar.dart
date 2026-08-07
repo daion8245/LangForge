@@ -10,6 +10,7 @@ class StatusBar extends StatelessWidget {
     this.fileCount = 0,
     this.namespaceCount = 0,
     this.totalEntryCount = 0,
+    this.cacheHitRateLabel = '—',
     this.statusMessage,
     this.isProgress = false,
     this.progressRatio,
@@ -20,6 +21,9 @@ class StatusBar extends StatelessWidget {
   final int fileCount;
   final int namespaceCount;
   final int totalEntryCount;
+
+  /// Pre-formatted (`25%` or `—`). Never pass a raw ratio (AGENTS.md 5.3).
+  final String cacheHitRateLabel;
   final String? statusMessage;
   final bool isProgress;
 
@@ -67,6 +71,13 @@ class StatusBar extends StatelessWidget {
             ),
 
             const Spacer(),
+
+            Text(
+              '캐시 $cacheHitRateLabel',
+              style: typography.caption.copyWith(color: colors.textSecondary),
+            ),
+
+            SizedBox(width: spacing.space7),
 
             if (isProgress) ...[
               SizedBox(

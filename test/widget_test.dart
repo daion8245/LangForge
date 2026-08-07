@@ -5,6 +5,8 @@ import 'package:langforge/app/app.dart';
 import 'package:langforge/application/project/project_session.dart';
 import 'package:langforge/infrastructure/project/registry_service.dart';
 
+import 'support/provider_test_setup.dart';
+
 /// The real registry lives in `%APPDATA%`; a test must never touch it.
 ProviderScope _app() {
   return ProviderScope(
@@ -20,6 +22,8 @@ ProviderScope _app() {
 }
 
 void main() {
+  setUpAll(loadProvidersForTest);
+
   testWidgets('The app opens on the start screen (S0)', (tester) async {
     await tester.pumpWidget(_app());
     await tester.pump();

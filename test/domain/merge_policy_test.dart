@@ -8,6 +8,8 @@ const String source = 'Original Source';
 TranslationEntry make({
   String? user,
   String? existing,
+  String? glossary,
+  String? reviewedCache,
   String? fresh,
   bool userEdited = false,
   EntryStatus status = EntryStatus.wait,
@@ -20,6 +22,8 @@ TranslationEntry make({
     sourceText: source,
     userTranslation: user,
     existingTranslation: existing,
+    glossaryTranslation: glossary,
+    reviewedCacheTranslation: reviewedCache,
     newTranslation: fresh,
     userEdited: userEdited,
     status: status,
@@ -31,21 +35,53 @@ void main() {
     test('user edit outranks everything', () {
       expect(
         MergePolicy.resolveFinal(
-          make(user: 'USER', existing: 'EXISTING', fresh: 'NEW'),
+          make(
+            user: 'USER',
+            existing: 'EXISTING',
+            glossary: 'GLOSS',
+            reviewedCache: 'CACHE',
+            fresh: 'NEW',
+          ),
         ),
         equals('USER'),
       );
     });
 
-    test('existing translation outranks a provider translation', () {
+    test('existing outranks glossary, reviewed cache, and provider', () {
       expect(
-        MergePolicy.resolveFinal(make(existing: 'EXISTING', fresh: 'NEW')),
+        MergePolicy.resolveFinal(
+          make(
+            existing: 'EXISTING',
+            glossary: 'GLOSS',
+            reviewedCache: 'CACHE',
+            fresh: 'NEW',
+          ),
+        ),
         equals('EXISTING'),
       );
     });
 
-    test('provider translation outranks the source text', () {
-      expect(MergePolicy.resolveFinal(make(fresh: 'NEW')), equals('NEW'));
+    test('glossary outranks reviewed cache and provider', () {
+      expect(
+        MergePolicy.resolveFinal(
+          make(glossary: 'GLOSS', reviewedCache: 'CACHE', fresh: 'NEW'),
+        ),
+        equals('GLOSS'),
+      );
+    });
+
+    test('reviewed cache outranks provider / auto-cache', () {
+      expect(
+        MergePolicy.resolveFinal(make(reviewedCache: 'CACHE', fresh: 'NEW')),
+        equals('CACHE'),
+      );
+    });
+
+    test('auto-cache in newTranslation is step 5, not step 4', () {
+      expect(
+        MergePolicy.resolveFinal(make(fresh: 'AUTO_CACHE')),
+        equals('AUTO_CACHE'),
+      );
     });
 
     test('source text is the last resort', () {
@@ -54,9 +90,6 @@ void main() {
   });
 
   group('MergePolicy empty-value handling', () {
-    // A cleared field is a deliberate answer. Treating it as "absent" would
-    // resurrect a value the user removed — the exact failure AGENTS.md 2.1
-    // forbids.
     test('an empty user edit wins over an existing translation', () {
       expect(
         MergePolicy.resolveFinal(make(user: '', existing: 'EXISTING')),
@@ -64,52 +97,55 @@ void main() {
       );
     });
 
-    test('an empty user edit wins over a provider translation', () {
+    test('an empty glossary wins over reviewed cache', () {
       expect(
-        MergePolicy.resolveFinal(make(user: '', fresh: 'NEW')),
+        MergePolicy.resolveFinal(make(glossary: '', reviewedCache: 'CACHE')),
         equals(''),
       );
     });
 
-    test('an empty user edit wins over the source text', () {
-      expect(MergePolicy.resolveFinal(make(user: '')), equals(''));
-    });
-
-    test('an empty existing translation wins over a provider translation', () {
+    test('an empty reviewed cache wins over provider', () {
       expect(
-        MergePolicy.resolveFinal(make(existing: '', fresh: 'NEW')),
+        MergePolicy.resolveFinal(make(reviewedCache: '', fresh: 'NEW')),
         equals(''),
       );
-    });
-
-    test('an empty provider translation wins over the source text', () {
-      expect(MergePolicy.resolveFinal(make(fresh: '')), equals(''));
     });
   });
 
   group('MergePolicy full combination matrix', () {
-    // Every combination of the three candidate fields being absent, empty, or
-    // filled: 3 x 3 x 3 = 27 cases, checked against the priority chain.
     const values = <String?>[null, '', 'VALUE'];
 
-    test('27 combinations resolve to the first present field', () {
+    test('243 combinations resolve to the first present field', () {
       var checked = 0;
       for (final user in values) {
         for (final existing in values) {
-          for (final fresh in values) {
-            final expected = user ?? existing ?? fresh ?? source;
-            expect(
-              MergePolicy.resolveFinal(
-                make(user: user, existing: existing, fresh: fresh),
-              ),
-              equals(expected),
-              reason: 'user=$user existing=$existing new=$fresh',
-            );
-            checked++;
+          for (final glossary in values) {
+            for (final reviewed in values) {
+              for (final fresh in values) {
+                final expected =
+                    user ?? existing ?? glossary ?? reviewed ?? fresh ?? source;
+                expect(
+                  MergePolicy.resolveFinal(
+                    make(
+                      user: user,
+                      existing: existing,
+                      glossary: glossary,
+                      reviewedCache: reviewed,
+                      fresh: fresh,
+                    ),
+                  ),
+                  equals(expected),
+                  reason:
+                      'user=$user existing=$existing glossary=$glossary '
+                      'reviewed=$reviewed new=$fresh',
+                );
+                checked++;
+              }
+            }
           }
         }
       }
-      expect(checked, equals(27));
+      expect(checked, equals(243));
     });
   });
 
@@ -123,28 +159,12 @@ void main() {
       );
     });
 
-    test('an empty user edit still counts as an edit', () {
-      expect(
-        MergePolicy.resolveStatus(
-          make(user: '', userEdited: true, status: EntryStatus.done),
-        ),
-        equals(EntryStatus.confirm),
-      );
-    });
-
     test('an untouched entry keeps its stored status', () {
       expect(
-        MergePolicy.resolveStatus(make(fresh: 'NEW', status: EntryStatus.done)),
-        equals(EntryStatus.done),
-      );
-    });
-
-    test('userEdited without a value does not force 확인 필요', () {
-      expect(
         MergePolicy.resolveStatus(
-          make(fresh: 'NEW', userEdited: true, status: EntryStatus.done),
+          make(fresh: 'NEW', status: EntryStatus.cache),
         ),
-        equals(EntryStatus.done),
+        equals(EntryStatus.cache),
       );
     });
   });

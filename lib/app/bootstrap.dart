@@ -1,7 +1,14 @@
 import 'package:drift/drift.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
+
+import '../application/cache/cache_providers.dart';
+import '../infrastructure/cache/translation_cache_store.dart';
+import '../infrastructure/glossary/glossary_store.dart';
 import '../infrastructure/logging/file_logger.dart';
+import '../infrastructure/provider/provider_catalog.dart';
+import '../infrastructure/provider/provider_registry.dart';
 
 Future<void> bootstrap(Widget Function() builder) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -13,6 +20,13 @@ Future<void> bootstrap(Widget Function() builder) async {
 
   // Initialize Logger & SensitiveFilter
   await FileLogger.instance.init();
+
+  // Endpoints and model lists come from assets/data/providers.json (Phase 8).
+  await ProviderCatalog.load();
+  ProviderRegistry.initialize();
+
+  final cacheStore = await TranslationCacheStore.open();
+  final glossaryStore = await GlossaryStore.open();
 
   // Initialize Window Manager for Desktop
   await windowManager.ensureInitialized();
@@ -31,5 +45,13 @@ Future<void> bootstrap(Widget Function() builder) async {
     await windowManager.focus();
   });
 
-  runApp(builder());
+  runApp(
+    ProviderScope(
+      overrides: [
+        translationCacheStoreProvider.overrideWith((ref) => cacheStore),
+        glossaryStoreProvider.overrideWith((ref) => glossaryStore),
+      ],
+      child: builder(),
+    ),
+  );
 }

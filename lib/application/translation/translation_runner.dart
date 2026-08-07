@@ -8,6 +8,10 @@ import 'dart:convert';
 import 'package:drift/drift.dart';
 import 'package:logging/logging.dart';
 
+import '../../domain/cache/cache_hit_rate.dart';
+import '../../domain/cache/cache_kind.dart';
+import '../../domain/glossary/glossary_policy.dart';
+import '../../domain/glossary/glossary_term.dart';
 import '../../domain/model/entry_status.dart';
 import '../../domain/normalize/text_normalizer.dart';
 import '../../domain/normalize/text_post_processor.dart';
@@ -17,7 +21,12 @@ import '../../domain/protection/token_protector.dart';
 import '../../domain/provider/backoff.dart';
 import '../../domain/provider/translation_error.dart';
 import '../../domain/provider/translation_provider.dart';
+import '../../domain/validation/translation_result_checks.dart';
+import '../../domain/cache/cache_key.dart';
+import '../../infrastructure/cache/cache_hashes.dart';
+import '../../infrastructure/cache/translation_cache_store.dart';
 import '../../infrastructure/db/app_database.dart';
+import '../../infrastructure/glossary/glossary_store.dart';
 import '../../infrastructure/normalize/unicode_text_normalizer.dart';
 
 enum RunnerStatus { idle, running, paused, error }
@@ -28,6 +37,7 @@ class TranslationRunnerProgress {
     required this.totalCount,
     required this.completedCount,
     required this.failedCount,
+    this.cacheHitCount = 0,
     this.currentMessage,
   });
 
@@ -35,9 +45,16 @@ class TranslationRunnerProgress {
   final int totalCount;
   final int completedCount;
   final int failedCount;
+
+  /// Entries satisfied from cache this run (API skipped).
+  final int cacheHitCount;
   final String? currentMessage;
 
   double get percent => totalCount == 0 ? 0.0 : completedCount / totalCount;
+
+  /// Never `NaN%` — zero total → `—` (AGENTS.md 5.3).
+  String get cacheHitRateLabel =>
+      CacheHitRate.format(hits: cacheHitCount, total: totalCount);
 }
 
 /// The provider returned a different number of items than we asked for.
@@ -54,6 +71,48 @@ class _ItemCountMismatch implements Exception {
   String toString() => '응답 항목 개수 불일치 (요청 $expected · 응답 $actual)';
 }
 
+/// How far echo recovery has progressed for the current subtree.
+enum _EchoPass {
+  /// First attempt for this batch.
+  initial,
+
+  /// Echo items collected and re-requested as one batch.
+  rebatch,
+
+  /// Final per-item attempt; remaining echoes become fallback.
+  single,
+}
+
+/// Intermediate outcome of restore / post-process / item checks.
+class _PreparedItem {
+  const _PreparedItem._({
+    required this.entry,
+    this.cleaned,
+    this.invalidReason,
+    this.rejected,
+  });
+
+  factory _PreparedItem.ok(Entry entry, String cleaned) =>
+      _PreparedItem._(entry: entry, cleaned: cleaned);
+
+  factory _PreparedItem.invalid(
+    Entry entry, {
+    required String reason,
+    String? rejected,
+  }) =>
+      _PreparedItem._(entry: entry, invalidReason: reason, rejected: rejected);
+
+  final Entry entry;
+  final String? cleaned;
+  final String? invalidReason;
+  final String? rejected;
+
+  bool get isInvalid => invalidReason != null;
+  bool get isEcho =>
+      cleaned != null &&
+      TranslationResultChecks.isEcho(entry.sourceText, cleaned!);
+}
+
 /// Drives the translation queue: batching, concurrency, retries, pause and
 /// cancel. See TECHNICAL.md 6.4 and 6.5.
 class TranslationRunner {
@@ -62,10 +121,14 @@ class TranslationRunner {
     required TranslationProvider provider,
     TextNormalizer normalizer = const UnicodeTextNormalizer(),
     Duration Function(int attempt) backoffStrategy = backoff,
+    TranslationCacheStore? cacheStore,
+    GlossaryStore? glossaryStore,
   }) : _db = db,
        _provider = provider,
        _normalizer = normalizer,
-       _backoff = backoffStrategy;
+       _backoff = backoffStrategy,
+       _cacheStore = cacheStore,
+       _glossaryStore = glossaryStore;
 
   static final Logger _log = Logger('TranslationRunner');
 
@@ -81,6 +144,8 @@ class TranslationRunner {
   final AppDatabase _db;
   final TranslationProvider _provider;
   final TextNormalizer _normalizer;
+  final TranslationCacheStore? _cacheStore;
+  final GlossaryStore? _glossaryStore;
 
   /// Injectable so tests do not have to sit through real backoff waits.
   final Duration Function(int attempt) _backoff;
@@ -100,8 +165,13 @@ class TranslationRunner {
   int _totalCount = 0;
   int _completedCount = 0;
   int _failedCount = 0;
+  int _cacheHitCount = 0;
   int _consecutiveNetworkErrors = 0;
   DateTime _lastProgressAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// namespaceId → namespace name (for glossary scope / fingerprint).
+  Map<String, String> _namespaceNames = const {};
+  List<GlossaryTerm> _mergedGlossary = const [];
 
   RunnerStatus get status => _status;
 
@@ -126,10 +196,19 @@ class TranslationRunner {
     _pauseGate = null;
     _completedCount = 0;
     _failedCount = 0;
+    _cacheHitCount = 0;
     _consecutiveNetworkErrors = 0;
     _lastProgressAt = DateTime.fromMillisecondsSinceEpoch(0);
 
     try {
+      // Echoes stored as done never re-enter the wait queue otherwise.
+      final requeued = await requeueEchoedEntries(
+        includeEchoFallback: retryFailed,
+      );
+      if (requeued > 0) {
+        _log.info('Requeued $requeued echoed entries as wait');
+      }
+
       final eligible = await _selectEligibleEntries(retryFailed: retryFailed);
       _totalCount = eligible.length;
 
@@ -145,10 +224,22 @@ class TranslationRunner {
       );
       _emitProgress('번역 준비 중…', force: true);
 
+      await _loadLocalLookups();
+      final local = await _applyLocalHits(
+        eligible,
+        sourceLang: sourceLang,
+        targetLang: targetLang,
+        model: model,
+      );
+      if (local.companions.isNotEmpty) {
+        await _flushDB(List<EntriesCompanion>.from(local.companions));
+        _accountCompanions(local.companions);
+      }
+
       // Batches stay grouped by namespace so one request sees related strings.
       final batches = <List<Entry>>[];
       final byNamespace = <String, List<Entry>>{};
-      for (final entry in eligible) {
+      for (final entry in local.needApi) {
         byNamespace.putIfAbsent(entry.namespaceId, () => []).add(entry);
       }
       for (final nsEntries in byNamespace.values) {
@@ -165,7 +256,10 @@ class TranslationRunner {
 
       if (_status == RunnerStatus.running) {
         _status = RunnerStatus.idle;
-        _emitProgress('번역이 완료되었습니다.', force: true);
+        final message = _failedCount > 0
+            ? '번역 완료 · 검증 실패 $_failedCount건'
+            : '번역이 완료되었습니다.';
+        _emitProgress(message, force: true);
         _log.info(
           'Translation finished: $_completedCount done, $_failedCount failed',
         );
@@ -181,6 +275,68 @@ class TranslationRunner {
     }
   }
 
+  /// Resets rows whose stored translation is an exact source echo to `wait` so
+  /// the next run can translate them again.
+  ///
+  /// Only rows in namespaces the runner would actually send are touched —
+  /// blanking a deselected namespace's value would strand it in 대기 forever,
+  /// because [_selectEligibleEntries] never picks it back up.
+  ///
+  /// `done` echoes are always requeued: they are the pre-fix rows that this
+  /// run can finally translate. `fallback` echoes are the runner's own
+  /// deliberate 원문 유지 verdict, so they only come back when the user asks
+  /// for a retry ([includeEchoFallback]) — sweeping them every run would pay
+  /// for the same untranslatable strings over and over. A user's own 원문 유지
+  /// (`userEdited`) is never touched either way.
+  Future<int> requeueEchoedEntries({bool includeEchoFallback = false}) async {
+    final namespaceIds = await _translatableNamespaceIds();
+    if (namespaceIds.isEmpty) return 0;
+
+    final statuses = <String>[
+      EntryStatus.done.wireName,
+      if (includeEchoFallback) EntryStatus.fallback.wireName,
+    ];
+
+    final candidates =
+        await (_db.select(_db.entries)..where(
+              (tbl) =>
+                  tbl.status.isIn(statuses) &
+                  tbl.namespaceId.isIn(namespaceIds) &
+                  tbl.newTranslation.isNotNull() &
+                  tbl.userEdited.equals(false),
+            ))
+            .get();
+
+    final toReset = candidates.where((e) {
+      if (e.newTranslation != e.sourceText) return false;
+      // An excluded value resolves to fallback with no validation detail; only
+      // the runner's own echo verdict carries the sourceEcho reason.
+      if (e.status == EntryStatus.fallback.wireName) {
+        return e.validationJson?.contains('sourceEcho') ?? false;
+      }
+      return true;
+    }).toList();
+
+    if (toReset.isEmpty) return 0;
+
+    final now = DateTime.now();
+    await _db.batch((b) {
+      for (final entry in toReset) {
+        b.update(
+          _db.entries,
+          EntriesCompanion(
+            status: Value(EntryStatus.wait.wireName),
+            newTranslation: const Value<String?>(null),
+            validationJson: Value(jsonEncode({'reason': 'echoRequeued'})),
+            updatedAt: Value(now),
+          ),
+          where: (tbl) => tbl.id.equals(entry.id),
+        );
+      }
+    });
+    return toReset.length;
+  }
+
   /// The 대기 entries that may actually be sent.
   ///
   /// A namespace that is excluded, deselected, has no source language file, or
@@ -194,19 +350,7 @@ class TranslationRunner {
       if (retryFailed) EntryStatus.invalid.wireName,
     ];
 
-    final translatableNamespaceIds =
-        await (_db.select(_db.namespaces)..where(
-              (tbl) =>
-                  tbl.excluded.equals(false) &
-                  tbl.selected.equals(true) &
-                  tbl.state.isNotIn([
-                    NamespaceState.jsonError.wireName,
-                    NamespaceState.noSource.wireName,
-                    NamespaceState.excluded.wireName,
-                  ]),
-            ))
-            .get()
-            .then((rows) => rows.map((ns) => ns.id).toList());
+    final translatableNamespaceIds = await _translatableNamespaceIds();
 
     if (translatableNamespaceIds.isEmpty) return const [];
 
@@ -216,6 +360,25 @@ class TranslationRunner {
               tbl.namespaceId.isIn(translatableNamespaceIds),
         ))
         .get();
+  }
+
+  /// Namespaces whose entries the runner is allowed to send.
+  ///
+  /// Shared with [requeueEchoedEntries] so a requeue can never reach a
+  /// namespace the queue will not pick up again.
+  Future<List<String>> _translatableNamespaceIds() {
+    return (_db.select(_db.namespaces)..where(
+          (tbl) =>
+              tbl.excluded.equals(false) &
+              tbl.selected.equals(true) &
+              tbl.state.isNotIn([
+                NamespaceState.jsonError.wireName,
+                NamespaceState.noSource.wireName,
+                NamespaceState.excluded.wireName,
+              ]),
+        ))
+        .get()
+        .then((rows) => rows.map((ns) => ns.id).toList());
   }
 
   /// Runs [batches] with at most `limits.maxConcurrentRequests` in flight.
@@ -257,7 +420,7 @@ class TranslationRunner {
             targetLang: targetLang,
           );
           pending.addAll(companions);
-          _completedCount += batch.length;
+          _accountCompanions(companions);
           _consecutiveNetworkErrors = 0;
         } on Cancelled {
           return;
@@ -289,12 +452,14 @@ class TranslationRunner {
         } on TranslationError catch (error, stackTrace) {
           // Retries are exhausted or the error is permanent. Record it on the
           // entries so the failure is visible rather than silently dropped.
-          pending.addAll(_markInvalid(batch, error.message));
-          _failedCount += batch.length;
+          final companions = _markInvalid(batch, error.message);
+          pending.addAll(companions);
+          _accountCompanions(companions);
           _log.warning('Batch failed permanently', error, stackTrace);
         } catch (error, stackTrace) {
-          pending.addAll(_markInvalid(batch, '알 수 없는 오류: $error'));
-          _failedCount += batch.length;
+          final companions = _markInvalid(batch, '알 수 없는 오류: $error');
+          pending.addAll(companions);
+          _accountCompanions(companions);
           _log.severe('Unexpected batch failure', error, stackTrace);
         }
 
@@ -312,6 +477,165 @@ class TranslationRunner {
     await Future.wait(List.generate(workerCount, (_) => worker()));
 
     await _flushDB(pending);
+  }
+
+  /// Counts done/fallback/empty/cache/confirm toward completed and invalid
+  /// toward failed.
+  void _accountCompanions(List<EntriesCompanion> companions) {
+    for (final companion in companions) {
+      if (!companion.status.present) continue;
+      final status = companion.status.value;
+      if (status == EntryStatus.invalid.wireName) {
+        _failedCount++;
+      } else if (status == EntryStatus.done.wireName ||
+          status == EntryStatus.fallback.wireName ||
+          status == EntryStatus.empty.wireName ||
+          status == EntryStatus.cache.wireName ||
+          status == EntryStatus.confirm.wireName) {
+        _completedCount++;
+      }
+    }
+  }
+
+  Future<void> _loadLocalLookups() async {
+    final namespaces = await _db.select(_db.namespaces).get();
+    _namespaceNames = {for (final ns in namespaces) ns.id: ns.name};
+    final glossary = _glossaryStore;
+    if (glossary != null) {
+      _mergedGlossary = await glossary.mergedTerms();
+    } else {
+      _mergedGlossary = const [];
+    }
+  }
+
+  /// Glossary exact-match and cache hits skip the provider (TECHNICAL 7.5).
+  Future<({List<EntriesCompanion> companions, List<Entry> needApi})>
+  _applyLocalHits(
+    List<Entry> eligible, {
+    required String sourceLang,
+    required String targetLang,
+    String? model,
+  }) async {
+    final companions = <EntriesCompanion>[];
+    final needApi = <Entry>[];
+    final now = DateTime.now();
+
+    final cacheCandidates = <Entry>[];
+    final keysByEntryId = <String, CacheKey>{};
+
+    for (final entry in eligible) {
+      if (ExclusionPolicy.shouldExclude(entry.sourceText)) {
+        needApi.add(entry);
+        continue;
+      }
+
+      final nsName = _namespaceNames[entry.namespaceId];
+      final applicable = GlossaryPolicy.applicable(
+        merged: _mergedGlossary,
+        sourceLang: sourceLang,
+        targetLang: targetLang,
+        namespaceName: nsName,
+      );
+
+      final glossaryHit = GlossaryPolicy.exactMatch(
+        entry.sourceText,
+        applicable,
+      );
+      if (glossaryHit != null) {
+        companions.add(
+          EntriesCompanion(
+            id: Value(entry.id),
+            status: Value(EntryStatus.done.wireName),
+            newTranslation: Value(glossaryHit),
+            validationJson: Value(jsonEncode({'reason': 'glossaryExact'})),
+            updatedAt: Value(now),
+          ),
+        );
+        continue;
+      }
+
+      if (_cacheStore == null) {
+        needApi.add(entry);
+        continue;
+      }
+
+      final key = TranslationCacheStore.buildKey(
+        sourceText: entry.sourceText,
+        sourceLangCode: sourceLang,
+        targetLangCode: targetLang,
+        providerId: _provider.id,
+        modelId: model ?? '',
+        glossaryFingerprint: CacheHashes.glossaryFingerprint(
+          GlossaryPolicy.fingerprintInputs(applicable),
+        ),
+      );
+      cacheCandidates.add(entry);
+      keysByEntryId[entry.id] = key;
+    }
+
+    final cacheStore = _cacheStore;
+    final hits = cacheStore == null || cacheCandidates.isEmpty
+        ? const <CacheKey, CacheHit?>{}
+        : await cacheStore.lookupMany(keysByEntryId.values.toList());
+
+    for (final entry in cacheCandidates) {
+      final key = keysByEntryId[entry.id]!;
+      final hit = hits[key];
+      if (hit != null) {
+        _cacheHitCount++;
+        companions.add(
+          EntriesCompanion(
+            id: Value(entry.id),
+            status: Value(EntryStatus.cache.wireName),
+            newTranslation: Value(hit.translation),
+            providerId: Value(_provider.id),
+            modelId: Value(model),
+            validationJson: Value(
+              jsonEncode({'reason': 'cacheHit', 'kind': hit.kind.wireName}),
+            ),
+            updatedAt: Value(now),
+          ),
+        );
+      } else {
+        needApi.add(entry);
+      }
+    }
+
+    return (companions: companions, needApi: needApi);
+  }
+
+  CacheWrite? _autoCacheWrite({
+    required Entry entry,
+    required String translation,
+    required String sourceLang,
+    required String targetLang,
+    String? model,
+  }) {
+    if (_cacheStore == null) return null;
+
+    final nsName = _namespaceNames[entry.namespaceId];
+    final applicable = GlossaryPolicy.applicable(
+      merged: _mergedGlossary,
+      sourceLang: sourceLang,
+      targetLang: targetLang,
+      namespaceName: nsName,
+    );
+    final key = TranslationCacheStore.buildKey(
+      sourceText: entry.sourceText,
+      sourceLangCode: sourceLang,
+      targetLangCode: targetLang,
+      providerId: _provider.id,
+      modelId: model ?? '',
+      glossaryFingerprint: CacheHashes.glossaryFingerprint(
+        GlossaryPolicy.fingerprintInputs(applicable),
+      ),
+    );
+    return CacheWrite(
+      key: key,
+      kind: CacheKind.auto,
+      translation: translation,
+      sourceText: entry.sourceText,
+    );
   }
 
   /// Blocks while the run is paused. Returns as soon as it resumes or is
@@ -411,6 +735,7 @@ class TranslationRunner {
     String? model,
     required String sourceLang,
     required String targetLang,
+    _EchoPass echoPass = _EchoPass.initial,
   }) async {
     if (_cancelToken.isCancelled) throw const Cancelled();
 
@@ -442,6 +767,7 @@ class TranslationRunner {
           model: model,
           sourceLang: sourceLang,
           targetLang: targetLang,
+          echoPass: echoPass,
         );
       }
       _log.warning('Item count mismatch on a single entry: $mismatch');
@@ -454,12 +780,275 @@ class TranslationRunner {
           model: model,
           sourceLang: sourceLang,
           targetLang: targetLang,
+          echoPass: echoPass,
         );
       }
       rethrow;
     }
 
-    return _validateResults(batch, protectedList, translated);
+    final prepared = _prepareItems(batch, protectedList, translated);
+
+    if (batch.length > 1 && echoPass == _EchoPass.initial) {
+      final echoCount = prepared.where((p) => !p.isInvalid && p.isEcho).length;
+      final rate = echoCount / batch.length;
+      if (rate >= TranslationResultChecks.batchEchoRetryThreshold) {
+        _log.warning(
+          'Batch echo rate ${(rate * 100).toStringAsFixed(0)}% '
+          '($echoCount/${batch.length}); splitting',
+        );
+        // The halves inherit `rebatch`, so a still-echoing half goes straight
+        // to per-item retries instead of splitting again. Letting them restart
+        // at `initial` builds a full binary split tree — measured at 196
+        // provider calls for 100 fully echoing entries, versus 112 here.
+        return _splitAndRetry(
+          batch: batch,
+          auth: auth,
+          model: model,
+          sourceLang: sourceLang,
+          targetLang: targetLang,
+          echoPass: _EchoPass.rebatch,
+        );
+      }
+    }
+
+    return _resolvePrepared(
+      prepared: prepared,
+      auth: auth,
+      model: model,
+      sourceLang: sourceLang,
+      targetLang: targetLang,
+      echoPass: echoPass,
+    );
+  }
+
+  List<_PreparedItem> _prepareItems(
+    List<Entry> batch,
+    List<ProtectedText> protectedList,
+    List<String> translated,
+  ) {
+    final prepared = <_PreparedItem>[];
+
+    for (var i = 0; i < batch.length; i++) {
+      final entry = batch[i];
+      final restored = TokenProtector.restore(protectedList[i], translated[i]);
+
+      if (restored == null) {
+        prepared.add(
+          _PreparedItem.invalid(
+            entry,
+            reason: 'placeholderLost',
+            rejected: translated[i],
+          ),
+        );
+        continue;
+      }
+
+      // Reject introduced control characters before post-processing strips
+      // them — otherwise the 7.3 check would never see them.
+      if (TranslationResultChecks.hasAbnormalControlChars(restored) &&
+          !TranslationResultChecks.hasAbnormalControlChars(entry.sourceText)) {
+        prepared.add(
+          _PreparedItem.invalid(
+            entry,
+            reason: 'controlChars',
+            rejected: restored,
+          ),
+        );
+        continue;
+      }
+
+      final cleaned = TextPostProcessor.process(
+        entry.sourceText,
+        restored,
+        normalizer: _normalizer,
+      );
+
+      if (TranslationResultChecks.isEmptyTranslation(
+        entry.sourceText,
+        cleaned,
+      )) {
+        prepared.add(
+          _PreparedItem.invalid(
+            entry,
+            reason: 'emptyTranslation',
+            rejected: cleaned,
+          ),
+        );
+        continue;
+      }
+
+      if (TranslationResultChecks.isExcessivelyLong(
+        entry.sourceText,
+        cleaned,
+      )) {
+        prepared.add(
+          _PreparedItem.invalid(
+            entry,
+            reason: 'excessiveLength',
+            rejected: cleaned,
+          ),
+        );
+        continue;
+      }
+
+      final verdict = MultisetValidator.validate(entry.sourceText, cleaned);
+      if (!verdict.isMatch) {
+        prepared.add(
+          _PreparedItem.invalid(
+            entry,
+            reason: 'tokenMismatch',
+            rejected: cleaned,
+          ),
+        );
+        continue;
+      }
+
+      prepared.add(_PreparedItem.ok(entry, cleaned));
+    }
+
+    return prepared;
+  }
+
+  Future<List<EntriesCompanion>> _resolvePrepared({
+    required List<_PreparedItem> prepared,
+    required AuthValues auth,
+    String? model,
+    required String sourceLang,
+    required String targetLang,
+    required _EchoPass echoPass,
+  }) async {
+    final results = <EntriesCompanion>[];
+    final echoes = <Entry>[];
+    final autoWrites = <CacheWrite>[];
+
+    for (final item in prepared) {
+      if (item.isInvalid) {
+        results.add(
+          EntriesCompanion(
+            id: Value(item.entry.id),
+            status: Value(EntryStatus.invalid.wireName),
+            newTranslation: const Value<String?>(null),
+            validationJson: Value(
+              jsonEncode({
+                'reason': item.invalidReason,
+                if (item.rejected != null) 'rejected': item.rejected,
+              }),
+            ),
+            updatedAt: Value(DateTime.now()),
+          ),
+        );
+        continue;
+      }
+
+      final cleaned = item.cleaned!;
+      if (item.isEcho) {
+        final finalizeEcho =
+            prepared.length == 1 || echoPass == _EchoPass.single;
+        if (finalizeEcho) {
+          results.add(_echoFallback(item.entry));
+        } else {
+          echoes.add(item.entry);
+        }
+        continue;
+      }
+
+      final nsName = _namespaceNames[item.entry.namespaceId];
+      final applicable = GlossaryPolicy.applicable(
+        merged: _mergedGlossary,
+        sourceLang: sourceLang,
+        targetLang: targetLang,
+        namespaceName: nsName,
+      );
+      final violations = GlossaryPolicy.findViolations(
+        sourceText: item.entry.sourceText,
+        translation: cleaned,
+        terms: applicable,
+      );
+
+      if (violations.isNotEmpty) {
+        results.add(
+          EntriesCompanion(
+            id: Value(item.entry.id),
+            status: Value(EntryStatus.confirm.wireName),
+            newTranslation: Value(cleaned),
+            providerId: Value(_provider.id),
+            modelId: Value(model),
+            validationJson: Value(
+              jsonEncode({
+                'reason': 'glossaryViolation',
+                'terms': [for (final v in violations) v.sourceTerm],
+              }),
+            ),
+            updatedAt: Value(DateTime.now()),
+          ),
+        );
+        continue;
+      }
+
+      results.add(
+        EntriesCompanion(
+          id: Value(item.entry.id),
+          status: Value(EntryStatus.done.wireName),
+          newTranslation: Value(cleaned),
+          providerId: Value(_provider.id),
+          modelId: Value(model),
+          validationJson: const Value<String?>(null),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+      final write = _autoCacheWrite(
+        entry: item.entry,
+        translation: cleaned,
+        sourceLang: sourceLang,
+        targetLang: targetLang,
+        model: model,
+      );
+      if (write != null) autoWrites.add(write);
+    }
+
+    if (autoWrites.isNotEmpty) {
+      await _cacheStore?.putAll(autoWrites);
+    }
+
+    if (echoes.isEmpty) return results;
+
+    if (echoPass == _EchoPass.initial) {
+      final retried = await _processBatch(
+        batch: echoes,
+        auth: auth,
+        model: model,
+        sourceLang: sourceLang,
+        targetLang: targetLang,
+        echoPass: _EchoPass.rebatch,
+      );
+      return [...results, ...retried];
+    }
+
+    // After the rebatch pass, finish remaining echoes one by one.
+    final singles = <EntriesCompanion>[];
+    for (final entry in echoes) {
+      singles.addAll(
+        await _processBatch(
+          batch: [entry],
+          auth: auth,
+          model: model,
+          sourceLang: sourceLang,
+          targetLang: targetLang,
+          echoPass: _EchoPass.single,
+        ),
+      );
+    }
+    return [...results, ...singles];
+  }
+
+  EntriesCompanion _echoFallback(Entry entry) {
+    return EntriesCompanion(
+      id: Value(entry.id),
+      status: Value(EntryStatus.fallback.wireName),
+      newTranslation: Value(entry.sourceText),
+      validationJson: Value(jsonEncode({'reason': 'sourceEcho'})),
+      updatedAt: Value(DateTime.now()),
+    );
   }
 
   /// Sends one request, retrying the retryable errors with exponential
@@ -526,6 +1115,7 @@ class TranslationRunner {
     String? model,
     required String sourceLang,
     required String targetLang,
+    _EchoPass echoPass = _EchoPass.initial,
   }) async {
     final mid = batch.length ~/ 2;
     final left = await _processBatch(
@@ -534,6 +1124,7 @@ class TranslationRunner {
       model: model,
       sourceLang: sourceLang,
       targetLang: targetLang,
+      echoPass: echoPass,
     );
     final right = await _processBatch(
       batch: batch.sublist(mid),
@@ -541,80 +1132,9 @@ class TranslationRunner {
       model: model,
       sourceLang: sourceLang,
       targetLang: targetLang,
+      echoPass: echoPass,
     );
     return [...left, ...right];
-  }
-
-  /// Restores tokens, post-processes, and refuses anything that fails the
-  /// multiset check. A rejected value is never stored as a translation.
-  List<EntriesCompanion> _validateResults(
-    List<Entry> batch,
-    List<ProtectedText> protectedList,
-    List<String> translated,
-  ) {
-    final results = <EntriesCompanion>[];
-
-    for (var i = 0; i < batch.length; i++) {
-      final entry = batch[i];
-      final restored = TokenProtector.restore(protectedList[i], translated[i]);
-
-      if (restored == null) {
-        results.add(
-          EntriesCompanion(
-            id: Value(entry.id),
-            status: Value(EntryStatus.invalid.wireName),
-            newTranslation: const Value<String?>(null),
-            validationJson: Value(
-              jsonEncode({
-                'reason': 'placeholderLost',
-                'rejected': translated[i],
-              }),
-            ),
-            updatedAt: Value(DateTime.now()),
-          ),
-        );
-        continue;
-      }
-
-      final cleaned = TextPostProcessor.process(
-        entry.sourceText,
-        restored,
-        normalizer: _normalizer,
-      );
-
-      final verdict = MultisetValidator.validate(entry.sourceText, cleaned);
-
-      if (!verdict.isMatch) {
-        // A value that fails validation is never stored as a translation
-        // (AGENTS.md 2.1, AC-6.7). Writing it to newTranslation would let
-        // MergePolicy pick it up and ship it. The rejected text is kept in the
-        // validation detail instead, so the row can still show what came back.
-        results.add(
-          EntriesCompanion(
-            id: Value(entry.id),
-            status: Value(EntryStatus.invalid.wireName),
-            newTranslation: const Value<String?>(null),
-            validationJson: Value(
-              jsonEncode({'reason': 'tokenMismatch', 'rejected': cleaned}),
-            ),
-            updatedAt: Value(DateTime.now()),
-          ),
-        );
-        continue;
-      }
-
-      results.add(
-        EntriesCompanion(
-          id: Value(entry.id),
-          status: Value(EntryStatus.done.wireName),
-          newTranslation: Value(cleaned),
-          validationJson: const Value<String?>(null),
-          updatedAt: Value(DateTime.now()),
-        ),
-      );
-    }
-
-    return results;
   }
 
   EntriesCompanion _resolveExcluded(Entry entry) {
@@ -696,6 +1216,7 @@ class TranslationRunner {
         totalCount: _totalCount,
         completedCount: _completedCount,
         failedCount: _failedCount,
+        cacheHitCount: _cacheHitCount,
         currentMessage: message,
       ),
     );

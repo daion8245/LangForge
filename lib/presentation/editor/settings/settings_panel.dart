@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../app/theme/theme_extensions.dart';
 import '../../../application/settings/engine_settings.dart';
+import '../../../domain/provider/translation_provider.dart';
 import '../../../infrastructure/provider/provider_registry.dart';
 import '../../common/lf_button.dart';
 import '../../common/lf_text_field.dart';
@@ -20,6 +21,8 @@ class SettingsPanel extends ConsumerStatefulWidget {
     this.isPaused = false,
     this.onResumeTranslation,
     this.isDocked = true,
+    this.cacheHitRateLabel = '—',
+    this.onOpenGlossary,
   });
 
   final int waitCount;
@@ -28,6 +31,8 @@ class SettingsPanel extends ConsumerStatefulWidget {
   final VoidCallback onStartTranslation;
   final VoidCallback onPauseTranslation;
   final VoidCallback? onResumeTranslation;
+  final String cacheHitRateLabel;
+  final VoidCallback? onOpenGlossary;
 
   /// Docked to the right of the editor. Inside the end drawer the panel takes
   /// the drawer's width instead of imposing its own, which would overflow the
@@ -39,34 +44,58 @@ class SettingsPanel extends ConsumerStatefulWidget {
 }
 
 class _SettingsPanelState extends ConsumerState<SettingsPanel> {
-  late final TextEditingController _apiKeyController;
+  final Map<String, TextEditingController> _controllers = {};
+  String? _boundProviderId;
 
   @override
   void initState() {
     super.initState();
-    _apiKeyController = TextEditingController(
-      text: ref.read(engineSettingsProvider).apiKey,
-    );
-    // The key may already be in the OS credential store from a previous run.
+    final settings = ref.read(engineSettingsProvider);
+    _syncControllers(settings);
     Future<void>.microtask(() async {
-      await ref.read(engineSettingsProvider.notifier).loadStoredKey();
+      await ref.read(engineSettingsProvider.notifier).loadStoredCredentials();
       if (!mounted) return;
-      final loaded = ref.read(engineSettingsProvider).apiKey;
-      if (loaded.isNotEmpty && _apiKeyController.text != loaded) {
-        _apiKeyController.text = loaded;
-      }
+      _syncControllers(ref.read(engineSettingsProvider));
     });
   }
 
   @override
   void dispose() {
-    _apiKeyController.dispose();
+    for (final controller in _controllers.values) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
-  Future<void> _launchApiKeyUrl() async {
-    final settings = ref.read(engineSettingsProvider);
-    final helpUrl = settings.provider.authFields.first.helpUrl;
+  void _syncControllers(EngineSettings settings) {
+    if (_boundProviderId != settings.providerId) {
+      final stale = List<TextEditingController>.from(_controllers.values);
+      _controllers.clear();
+      _boundProviderId = settings.providerId;
+      // Dispose after this frame — mutating controllers during build is unsafe.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        for (final controller in stale) {
+          controller.dispose();
+        }
+      });
+    }
+
+    for (final field in settings.provider.authFields) {
+      final existing = _controllers[field.id];
+      final value = settings.credentials[field.id] ?? '';
+      if (existing == null) {
+        _controllers[field.id] = TextEditingController(text: value);
+      } else if (existing.text != value) {
+        existing.value = TextEditingValue(
+          text: value,
+          selection: TextSelection.collapsed(offset: value.length),
+        );
+      }
+    }
+  }
+
+  Future<void> _launchHelpUrl(AuthField field) async {
+    final helpUrl = field.helpUrl;
     if (helpUrl == null) return;
     final url = Uri.parse(helpUrl);
     if (await canLaunchUrl(url)) {
@@ -83,6 +112,14 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
     final settings = ref.watch(engineSettingsProvider);
     final notifier = ref.read(engineSettingsProvider.notifier);
     final locked = widget.isTranslating;
+
+    ref.listen<EngineSettings>(engineSettingsProvider, (previous, next) {
+      if (previous?.providerId != next.providerId ||
+          previous?.credentials != next.credentials) {
+        _syncControllers(next);
+      }
+    });
+    _syncControllers(settings);
 
     return FocusTraversalGroup(
       child: Container(
@@ -141,65 +178,72 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
             ),
             SizedBox(height: spacing.space6),
 
-            Row(
-              children: [
-                Text(
-                  settings.provider.authFields.first.label,
-                  style: typography.caption.copyWith(
-                    color: colors.textSecondary,
+            for (final field in settings.provider.authFields) ...[
+              Row(
+                children: [
+                  Text(
+                    field.label,
+                    style: typography.caption.copyWith(
+                      color: colors.textSecondary,
+                    ),
                   ),
-                ),
-                const Spacer(),
-                InkWell(
-                  onTap: _launchApiKeyUrl,
-                  child: Text(
-                    '키 발급받기',
-                    style: typography.caption.copyWith(color: colors.accent),
-                  ),
-                ),
-              ],
-            ),
-            SizedBox(height: spacing.space3),
-            LfTextField(
-              controller: _apiKeyController,
-              obscureText: true,
-              readOnly: locked,
-              placeholder: 'AIzaSy...',
-              onChanged: notifier.setApiKey,
-            ),
-            SizedBox(height: spacing.space6),
-
-            Text(
-              '모델 선택',
-              style: typography.caption.copyWith(color: colors.textSecondary),
-            ),
-            SizedBox(height: spacing.space3),
-            _dropdownShell(
-              context,
-              child: DropdownButton<String>(
-                value: settings.model,
-                isExpanded: true,
-                dropdownColor: colors.bgRaised,
-                items: [
-                  for (final model in settings.provider.models)
-                    DropdownMenuItem(
-                      value: model,
+                  const Spacer(),
+                  if (field.helpUrl != null)
+                    InkWell(
+                      onTap: () => _launchHelpUrl(field),
                       child: Text(
-                        model,
-                        style: typography.bodySm.copyWith(
-                          color: colors.textPrimary,
+                        '키 발급받기',
+                        style: typography.caption.copyWith(
+                          color: colors.accent,
                         ),
                       ),
                     ),
                 ],
-                onChanged: locked
-                    ? null
-                    : (value) {
-                        if (value != null) notifier.setModel(value);
-                      },
               ),
-            ),
-            SizedBox(height: spacing.space7),
+              SizedBox(height: spacing.space3),
+              LfTextField(
+                controller: _controllers[field.id],
+                obscureText: field.isSecret,
+                readOnly: locked,
+                placeholder: field.placeholder ?? '',
+                onChanged: (value) => notifier.setCredential(field.id, value),
+              ),
+              SizedBox(height: spacing.space6),
+            ],
+
+            if (settings.provider.models.isNotEmpty) ...[
+              Text(
+                '모델 선택',
+                style: typography.caption.copyWith(color: colors.textSecondary),
+              ),
+              SizedBox(height: spacing.space3),
+              _dropdownShell(
+                context,
+                child: DropdownButton<String>(
+                  value: settings.model.isEmpty ? null : settings.model,
+                  isExpanded: true,
+                  dropdownColor: colors.bgRaised,
+                  items: [
+                    for (final model in settings.provider.models)
+                      DropdownMenuItem(
+                        value: model,
+                        child: Text(
+                          model,
+                          style: typography.bodySm.copyWith(
+                            color: colors.textPrimary,
+                          ),
+                        ),
+                      ),
+                  ],
+                  onChanged: locked
+                      ? null
+                      : (value) {
+                          if (value != null) notifier.setModel(value);
+                        },
+                ),
+              ),
+              SizedBox(height: spacing.space7),
+            ],
 
             LfButton(
               onPressed: settings.isTesting || locked
@@ -223,6 +267,18 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
                 ),
               ),
             ],
+
+            Text(
+              '캐시 적중률  ${widget.cacheHitRateLabel}',
+              style: typography.caption.copyWith(color: colors.textSecondary),
+            ),
+            SizedBox(height: spacing.space5),
+            LfButton(
+              onPressed: widget.onOpenGlossary,
+              label: '용어집 관리',
+              icon: Icon(LucideIcons.bookOpen, size: context.d.iconMd),
+              style: LfButtonStyle.secondary,
+            ),
 
             const Spacer(),
 

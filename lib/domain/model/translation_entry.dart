@@ -16,6 +16,8 @@ class TranslationEntry {
     this.existingTranslation,
     this.newTranslation,
     this.userTranslation,
+    this.glossaryTranslation,
+    this.reviewedCacheTranslation,
     this.userEdited = false,
   });
 
@@ -33,15 +35,47 @@ class TranslationEntry {
   /// Value found in the input file's target language JSON.
   final String? existingTranslation;
 
-  /// Value produced by a translation provider in this project.
+  /// Value produced by a translation provider (or auto-cache) in this project.
   final String? newTranslation;
 
   /// Value the user typed. Outranks everything else.
   final String? userTranslation;
 
+  /// Exact glossary hit. MergePolicy step 3. [1.0]
+  final String? glossaryTranslation;
+
+  /// `reviewed` / `userEdited` cache only. MergePolicy step 4. [1.0]
+  final String? reviewedCacheTranslation;
+
   final bool userEdited;
 
   final EntryStatus status;
+
+  TranslationEntry copyWith({
+    String? existingTranslation,
+    String? newTranslation,
+    String? userTranslation,
+    String? glossaryTranslation,
+    String? reviewedCacheTranslation,
+    bool? userEdited,
+    EntryStatus? status,
+  }) {
+    return TranslationEntry(
+      id: id,
+      namespaceId: namespaceId,
+      key: key,
+      keyOrder: keyOrder,
+      sourceText: sourceText,
+      existingTranslation: existingTranslation ?? this.existingTranslation,
+      newTranslation: newTranslation ?? this.newTranslation,
+      userTranslation: userTranslation ?? this.userTranslation,
+      glossaryTranslation: glossaryTranslation ?? this.glossaryTranslation,
+      reviewedCacheTranslation:
+          reviewedCacheTranslation ?? this.reviewedCacheTranslation,
+      userEdited: userEdited ?? this.userEdited,
+      status: status ?? this.status,
+    );
+  }
 }
 
 /// One `assets/{name}/lang` unit inside an input file.

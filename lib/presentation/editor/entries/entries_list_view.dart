@@ -26,6 +26,7 @@ class EntriesListView extends StatefulWidget {
     this.onUpdateUserTranslation,
     this.onResetEntryToWait,
     this.onKeepSourceText,
+    this.onApproveConfirm,
     this.isTranslating = false,
   });
 
@@ -49,6 +50,7 @@ class EntriesListView extends StatefulWidget {
   final void Function(String entryId, String newText)? onUpdateUserTranslation;
   final void Function(String entryId)? onResetEntryToWait;
   final void Function(String entryId)? onKeepSourceText;
+  final void Function(String entryId)? onApproveConfirm;
 
   /// While a run is in flight the translation column is read-only
   /// (EXPERIENCE.md 6.4).
@@ -423,6 +425,23 @@ class _EntriesListViewState extends State<EntriesListView> {
                                         style: LfButtonStyle.secondary,
                                       ),
                                     ],
+                                  ),
+                                ],
+                                if (entry.status == 'confirm' ||
+                                    (entry.userEdited &&
+                                        entry.userTranslation != null)) ...[
+                                  SizedBox(height: spacing.space4),
+                                  LfButton(
+                                    onPressed: widget.isTranslating
+                                        ? null
+                                        : () => widget.onApproveConfirm?.call(
+                                            entry.id,
+                                          ),
+                                    label: '승인',
+                                    tooltip: widget.isTranslating
+                                        ? '번역이 진행 중입니다'
+                                        : '확인 필요를 승인하고 검수 캐시에 저장',
+                                    style: LfButtonStyle.secondary,
                                   ),
                                 ],
                               ],

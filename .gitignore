@@ -48,3 +48,7 @@ app.*.map.json
 # They are third-party copyrighted files and must not be committed; keep them
 # on disk and point LANGFORGE_CORPUS_DIR at their folder.
 /test_fixtures/corpus/
+
+# Live placeholder probe output (TECHNICAL.md Q1). Regenerate with
+# `dart run tool/probe_placeholder.dart` / `--live`; do not commit API samples.
+/tool/probe_placeholder_results.md

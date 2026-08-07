@@ -10,6 +10,8 @@ import 'package:langforge/infrastructure/db/app_database.dart';
 import 'package:langforge/presentation/editor/editor_shell.dart';
 import 'package:langforge/presentation/editor/entries/entries_list_view.dart';
 
+import '../support/provider_test_setup.dart';
+
 /// Builds the three-panel editor with real rows.
 ///
 /// The other widget tests only reach S0 and S1, so nothing was rendering the
@@ -145,6 +147,8 @@ Future<void> pumpAt(WidgetTester tester, Widget widget, Size size) async {
 }
 
 void main() {
+  setUpAll(loadProvidersForTest);
+
   const wide = Size(1400, 900);
 
   testWidgets('The three-panel editor builds with real rows', (tester) async {

@@ -8,6 +8,9 @@ class ProtectedText {
 }
 
 abstract final class TokenProtector {
+  /// Bump when substitution rules change so cache keys diverge (TECHNICAL 7.5).
+  static const String version = '1';
+
   /// Invisible separator U+2063 wrapper for placeholders
   static String placeholder(int index) => '\u{2063}LF$index\u{2063}';
 

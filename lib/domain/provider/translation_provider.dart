@@ -5,12 +5,14 @@ class AuthField {
   final String label;
   final bool isSecret;
   final String? helpUrl;
+  final String? placeholder;
 
   const AuthField({
     required this.id,
     required this.label,
     this.isSecret = true,
     this.helpUrl,
+    this.placeholder,
   });
 }
 

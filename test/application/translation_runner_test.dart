@@ -4,10 +4,15 @@ import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:langforge/application/translation/translation_runner.dart';
+import 'package:langforge/domain/cache/cache_kind.dart';
+import 'package:langforge/domain/glossary/glossary_term.dart';
 import 'package:langforge/domain/protection/token_protector.dart';
 import 'package:langforge/domain/provider/translation_error.dart';
 import 'package:langforge/domain/provider/translation_provider.dart';
+import 'package:langforge/infrastructure/cache/cache_hashes.dart';
+import 'package:langforge/infrastructure/cache/translation_cache_store.dart';
 import 'package:langforge/infrastructure/db/app_database.dart';
+import 'package:langforge/infrastructure/glossary/glossary_store.dart';
 
 /// A provider whose behaviour each test dictates.
 class ScriptedProvider implements TranslationProvider {
@@ -210,6 +215,23 @@ void main() {
       final entries = await allEntries();
       expect(entries.every((e) => e.status == 'invalid'), isTrue);
       expect(entries.first.validationJson, isNotNull);
+    });
+
+    test('InvalidResponse (generic 4xx) is not retried', () async {
+      await seedEntries(2);
+
+      final provider = ScriptedProvider(
+        textsPerRequest: 10,
+        onTranslate: (_) async =>
+            throw const InvalidResponse('API 오류 (400): bad request'),
+      );
+      final runner = TranslationRunner(db: db, provider: provider);
+
+      await runner.startTranslation(auth: auth);
+
+      expect(provider.callCount, equals(1));
+      final entries = await allEntries();
+      expect(entries.every((e) => e.status == 'invalid'), isTrue);
     });
 
     test('A count mismatch splits the batch instead of failing it', () async {
@@ -540,5 +562,392 @@ void main() {
         expect(messages.last, contains('완료'));
       },
     );
+
+    test('Per-item invalids count toward failedCount and the banner', () async {
+      await seedEntries(2);
+      await (db.update(db.entries)..where((t) => t.id.equals('e0'))).write(
+        EntriesCompanion(
+          sourceText: const Value('Deals %s damage'),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+
+      final provider = ScriptedProvider(
+        textsPerRequest: 10,
+        onTranslate: (request) async => [
+          for (final text in request.texts)
+            text.contains('\u2063') ? '피해만' : '번역_$text',
+        ],
+      );
+      final runner = TranslationRunner(db: db, provider: provider);
+
+      TranslationRunnerProgress? last;
+      final sub = runner.progressStream.listen((p) => last = p);
+      await runner.startTranslation(auth: auth);
+      await Future<void>.delayed(Duration.zero);
+      await sub.cancel();
+
+      expect(last, isNotNull);
+      expect(last!.failedCount, greaterThan(0));
+      expect(last!.currentMessage, contains('검증 실패'));
+    });
+  });
+
+  group('Source echo handling', () {
+    test(
+      'A full-echo batch is split and finalized as fallback, not done',
+      () async {
+        await seedEntries(4);
+
+        final provider = ScriptedProvider(
+          textsPerRequest: 4,
+          onTranslate: (request) async => List<String>.from(request.texts),
+        );
+        final runner = TranslationRunner(db: db, provider: provider);
+
+        await runner.startTranslation(auth: auth);
+
+        final entries = await allEntries();
+        expect(entries.every((e) => e.status == 'fallback'), isTrue);
+        expect(entries.every((e) => e.newTranslation == e.sourceText), isTrue);
+        expect(provider.callCount, greaterThan(1), reason: 'must split/retry');
+      },
+    );
+
+    test(
+      'A 96% echo batch (48/50 pattern) triggers retry, not silent done',
+      () async {
+        await seedEntries(50);
+
+        var pass = 0;
+        final provider = ScriptedProvider(
+          textsPerRequest: 50,
+          concurrency: 1,
+          onTranslate: (request) async {
+            pass++;
+            // First large request: echo 48, translate 2 — the burnt_basic G3 shape.
+            if (request.texts.length >= 50) {
+              return [
+                for (var i = 0; i < request.texts.length; i++)
+                  (i == 38 || i == 47)
+                      ? '번역_${request.texts[i]}'
+                      : request.texts[i],
+              ];
+            }
+            // Smaller retries: still echo so singles settle as fallback.
+            return List<String>.from(request.texts);
+          },
+        );
+        final runner = TranslationRunner(db: db, provider: provider);
+
+        await runner.startTranslation(auth: auth);
+
+        final entries = await allEntries();
+        final done = entries.where((e) => e.status == 'done').length;
+        final fallback = entries.where((e) => e.status == 'fallback').length;
+        // Must not accept 48 echoes as done.
+        expect(done, lessThan(10));
+        expect(fallback, greaterThan(40));
+        expect(pass, greaterThan(1));
+      },
+    );
+
+    test('A single-item echo is stored as fallback', () async {
+      await seedEntries(1);
+
+      final provider = ScriptedProvider(
+        onTranslate: (request) async => List<String>.from(request.texts),
+      );
+      final runner = TranslationRunner(db: db, provider: provider);
+
+      await runner.startTranslation(auth: auth);
+
+      final entry = (await allEntries()).single;
+      expect(entry.status, equals('fallback'));
+      expect(entry.validationJson, contains('sourceEcho'));
+    });
+
+    test('Empty provider output is rejected', () async {
+      await seedEntries(1);
+
+      final provider = ScriptedProvider(onTranslate: (_) async => ['']);
+      final runner = TranslationRunner(db: db, provider: provider);
+
+      await runner.startTranslation(auth: auth);
+
+      final entry = (await allEntries()).single;
+      expect(entry.status, equals('invalid'));
+      expect(entry.newTranslation, isNull);
+      expect(entry.validationJson, contains('emptyTranslation'));
+    });
+
+    test('Control characters and excessive length are rejected', () async {
+      await seedEntries(2);
+      await (db.update(db.entries)..where((t) => t.id.equals('e0'))).write(
+        const EntriesCompanion(sourceText: Value('Short')),
+      );
+      await (db.update(db.entries)..where((t) => t.id.equals('e1'))).write(
+        const EntriesCompanion(sourceText: Value('Hi')),
+      );
+
+      final provider = ScriptedProvider(
+        textsPerRequest: 10,
+        onTranslate: (request) async => [
+          for (final text in request.texts)
+            if (text == 'Short') 'bad\x00text' else 'x' * 30,
+        ],
+      );
+      final runner = TranslationRunner(db: db, provider: provider);
+
+      await runner.startTranslation(auth: auth);
+
+      final entries = await allEntries();
+      expect(entries.every((e) => e.status == 'invalid'), isTrue);
+      expect(
+        entries.map((e) => e.validationJson).join(),
+        contains('controlChars'),
+      );
+      expect(
+        entries.map((e) => e.validationJson).join(),
+        contains('excessiveLength'),
+      );
+    });
+
+    test('Previously done echoes are requeued on the next run', () async {
+      await seedEntries(2);
+      final now = DateTime.now();
+      await (db.update(db.entries)..where((t) => t.id.equals('e0'))).write(
+        EntriesCompanion(
+          status: const Value('done'),
+          newTranslation: const Value('Item 0'), // echo of sourceText
+          updatedAt: Value(now),
+        ),
+      );
+      await (db.update(db.entries)..where((t) => t.id.equals('e1'))).write(
+        EntriesCompanion(
+          status: const Value('done'),
+          newTranslation: const Value('진짜 번역'),
+          updatedAt: Value(now),
+        ),
+      );
+      // Intentional fallback must not be touched.
+      await db
+          .into(db.entries)
+          .insert(
+            EntriesCompanion.insert(
+              id: 'eKeep',
+              namespaceId: 'ns1',
+              key: 'keep',
+              keyOrder: 99,
+              sourceText: 'Minecraft',
+              status: 'fallback',
+              newTranslation: const Value('Minecraft'),
+              updatedAt: now,
+            ),
+          );
+
+      final provider = ScriptedProvider(
+        onTranslate: (request) async =>
+            request.texts.map((t) => '번역_$t').toList(),
+      );
+      final runner = TranslationRunner(db: db, provider: provider);
+
+      await runner.startTranslation(auth: auth);
+
+      final entries = await allEntries();
+      expect(entries.firstWhere((e) => e.id == 'e0').status, equals('done'));
+      expect(
+        entries.firstWhere((e) => e.id == 'e0').newTranslation,
+        equals('번역_Item 0'),
+      );
+      expect(
+        entries.firstWhere((e) => e.id == 'e1').newTranslation,
+        equals('진짜 번역'),
+      );
+      expect(
+        entries.firstWhere((e) => e.id == 'eKeep').status,
+        equals('fallback'),
+      );
+    });
+
+    test('Requeue never reaches a namespace the queue would skip', () async {
+      await seedEntries(1);
+      final now = DateTime.now();
+      await (db.update(db.entries)..where((t) => t.id.equals('e0'))).write(
+        EntriesCompanion(
+          status: const Value('done'),
+          newTranslation: const Value('Item 0'), // echo
+          updatedAt: Value(now),
+        ),
+      );
+      // Deselecting the namespace takes its entries out of the queue. Blanking
+      // them anyway would strand them in 대기 with no value.
+      await (db.update(db.namespaces)..where((t) => t.id.equals('ns1'))).write(
+        const NamespacesCompanion(selected: Value(false)),
+      );
+
+      final provider = ScriptedProvider();
+      final runner = TranslationRunner(db: db, provider: provider);
+
+      await runner.startTranslation(auth: auth);
+
+      final entry = (await allEntries()).single;
+      expect(entry.status, equals('done'));
+      expect(entry.newTranslation, equals('Item 0'));
+      expect(provider.callCount, equals(0));
+    });
+
+    test('Echo fallbacks return to the queue only on retryFailed', () async {
+      final now = DateTime.now();
+      await seedEntries(1);
+      await db
+          .into(db.entries)
+          .insert(
+            EntriesCompanion.insert(
+              id: 'eEcho',
+              namespaceId: 'ns1',
+              key: 'echo',
+              keyOrder: 50,
+              sourceText: 'Splash',
+              status: 'fallback',
+              newTranslation: const Value('Splash'),
+              validationJson: const Value('{"reason":"sourceEcho"}'),
+              updatedAt: now,
+            ),
+          );
+      // User's own 원문 유지 — same shape, but never swept.
+      await db
+          .into(db.entries)
+          .insert(
+            EntriesCompanion.insert(
+              id: 'eUser',
+              namespaceId: 'ns1',
+              key: 'user',
+              keyOrder: 51,
+              sourceText: 'Minecraft',
+              status: 'fallback',
+              newTranslation: const Value('Minecraft'),
+              userTranslation: const Value('Minecraft'),
+              userEdited: const Value(true),
+              updatedAt: now,
+            ),
+          );
+
+      final plain = ScriptedProvider(
+        onTranslate: (request) async =>
+            request.texts.map((t) => '번역_$t').toList(),
+      );
+      await TranslationRunner(
+        db: db,
+        provider: plain,
+      ).startTranslation(auth: auth);
+
+      var echo = (await allEntries()).firstWhere((e) => e.id == 'eEcho');
+      expect(echo.status, equals('fallback'), reason: 'no sweep by default');
+
+      final retry = ScriptedProvider(
+        onTranslate: (request) async =>
+            request.texts.map((t) => '번역_$t').toList(),
+      );
+      await TranslationRunner(
+        db: db,
+        provider: retry,
+      ).startTranslation(auth: auth, retryFailed: true);
+
+      final entries = await allEntries();
+      echo = entries.firstWhere((e) => e.id == 'eEcho');
+      expect(echo.status, equals('done'));
+      expect(echo.newTranslation, equals('번역_Splash'));
+
+      final user = entries.firstWhere((e) => e.id == 'eUser');
+      expect(user.status, equals('fallback'));
+      expect(user.newTranslation, equals('Minecraft'));
+    });
+
+    test('A fully echoing run does not fan out into a split tree', () async {
+      await seedEntries(100);
+
+      final provider = ScriptedProvider(
+        textsPerRequest: 25,
+        concurrency: 1,
+        onTranslate: (request) async => List<String>.from(request.texts),
+      );
+      final runner = TranslationRunner(db: db, provider: provider);
+
+      await runner.startTranslation(auth: auth);
+
+      final entries = await allEntries();
+      expect(entries.every((e) => e.status == 'fallback'), isTrue);
+      // 4 initial batches × (1 batch + 2 halves + 25 singles) = 112.
+      // Halves restarting at `initial` would build a binary tree: 196.
+      expect(provider.callCount, equals(112));
+    });
+  });
+
+  group('Cache and glossary local hits', () {
+    test('cache hit skips the provider entirely', () async {
+      await seedEntries(1);
+      final cache = TranslationCacheStore.inMemory();
+      addTearDown(cache.close);
+
+      final key = TranslationCacheStore.buildKey(
+        sourceText: 'Item 0',
+        sourceLangCode: 'en_us',
+        targetLangCode: 'ko_kr',
+        providerId: 'scripted',
+        modelId: 'scripted-model',
+        glossaryFingerprint: CacheHashes.glossaryFingerprint(const []),
+      );
+      await cache.put(
+        key: key,
+        kind: CacheKind.auto,
+        translation: '캐시된 아이템',
+        sourceText: 'Item 0',
+      );
+
+      final provider = ScriptedProvider();
+      final runner = TranslationRunner(
+        db: db,
+        provider: provider,
+        cacheStore: cache,
+      );
+
+      await runner.startTranslation(auth: auth, model: 'scripted-model');
+
+      expect(provider.callCount, equals(0));
+      final entry = (await allEntries()).single;
+      expect(entry.status, equals('cache'));
+      expect(entry.newTranslation, equals('캐시된 아이템'));
+    });
+
+    test('glossary exact match skips the provider', () async {
+      await seedEntries(1);
+      final glossary = GlossaryStore.inMemory(projectDb: db);
+      addTearDown(glossary.close);
+      await glossary.upsertProject(
+        const GlossaryTerm(
+          id: 'g1',
+          sourceTerm: 'Item 0',
+          targetTerm: '용어집 아이템',
+          sourceLang: 'en_us',
+          targetLang: 'ko_kr',
+        ),
+      );
+
+      final provider = ScriptedProvider();
+      final runner = TranslationRunner(
+        db: db,
+        provider: provider,
+        glossaryStore: glossary,
+      );
+
+      await runner.startTranslation(auth: auth);
+
+      expect(provider.callCount, equals(0));
+      final entry = (await allEntries()).single;
+      expect(entry.status, equals('done'));
+      expect(entry.newTranslation, equals('용어집 아이템'));
+      expect(entry.validationJson, contains('glossaryExact'));
+    });
   });
 }
