@@ -1,0 +1,44 @@
+[
+  {
+    "displayName": "한국어",
+    "mc": "ko_kr",
+    "outputFile": "ko_kr.json",
+    "codes": { "google": "ko", "papago": "ko", "deepl": "KO", "gemini": "Korean" },
+    "aliases": ["ko-KR", "KO_KR", "Korean", "한국어", "ko", "ko_kr"]
+  },
+  {
+    "displayName": "English (US)",
+    "mc": "en_us",
+    "outputFile": "en_us.json",
+    "codes": { "google": "en", "papago": "en", "deepl": "EN-US", "gemini": "English" },
+    "aliases": ["en-US", "EN_US", "English", "en", "en_us"]
+  },
+  {
+    "displayName": "English (UK)",
+    "mc": "en_gb",
+    "outputFile": "en_gb.json",
+    "codes": { "google": "en", "papago": "en", "deepl": "EN-GB", "gemini": "English" },
+    "aliases": ["en-GB", "EN_GB", "en_gb"]
+  },
+  {
+    "displayName": "日本語",
+    "mc": "ja_jp",
+    "outputFile": "ja_jp.json",
+    "codes": { "google": "ja", "papago": "ja", "deepl": "JA", "gemini": "Japanese" },
+    "aliases": ["ja-JP", "JA_JP", "Japanese", "일본어", "ja", "ja_jp"]
+  },
+  {
+    "displayName": "Deutsch",
+    "mc": "de_de",
+    "outputFile": "de_de.json",
+    "codes": { "google": "de", "papago": "de", "deepl": "DE", "gemini": "German" },
+    "aliases": ["de-DE", "DE_DE", "German", "독일어", "de", "de_de"]
+  },
+  {
+    "displayName": "Français",
+    "mc": "fr_fr",
+    "outputFile": "fr_fr.json",
+    "codes": { "google": "fr", "papago": "fr", "deepl": "FR", "gemini": "French" },
+    "aliases": ["fr-FR", "FR_FR", "French", "프랑스어", "fr", "fr_fr"]
+  }
+]

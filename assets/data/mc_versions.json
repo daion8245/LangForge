@@ -1,0 +1,14 @@
+[
+  { "version": "1.21.4", "packFormat": 46, "minFormat": 46, "maxFormat": 46 },
+  { "version": "1.21.3", "packFormat": 42, "minFormat": 42, "maxFormat": 42 },
+  { "version": "1.21.2", "packFormat": 42, "minFormat": 42, "maxFormat": 42 },
+  { "version": "1.21.1", "packFormat": 34, "minFormat": 34, "maxFormat": 34 },
+  { "version": "1.21",   "packFormat": 34, "minFormat": 34, "maxFormat": 34 },
+  { "version": "1.20.6", "packFormat": 32, "minFormat": 32, "maxFormat": 32 },
+  { "version": "1.20.4", "packFormat": 22, "minFormat": 22, "maxFormat": 22 },
+  { "version": "1.20.2", "packFormat": 18, "minFormat": 18, "maxFormat": 18 },
+  { "version": "1.20.1", "packFormat": 15, "minFormat": 15, "maxFormat": 15 },
+  { "version": "1.19.4", "packFormat": 13, "minFormat": 13, "maxFormat": 13 },
+  { "version": "1.19.2", "packFormat":  9, "minFormat":  9, "maxFormat":  9 },
+  { "version": "1.18.2", "packFormat":  8, "minFormat":  8, "maxFormat":  8 }
+]
