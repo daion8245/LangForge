@@ -5,11 +5,14 @@ class CloseConfirmationDialog extends StatelessWidget {
   const CloseConfirmationDialog({
     super.key,
     required this.isTranslating,
-    required this.onConfirmClose,
+    this.onConfirmClose,
   });
 
   final bool isTranslating;
-  final VoidCallback onConfirmClose;
+
+  /// Optional extra work on confirm. The dialog itself pops `true` so callers
+  /// can simply await the result.
+  final VoidCallback? onConfirmClose;
 
   @override
   Widget build(BuildContext context) {
@@ -21,12 +24,15 @@ class CloseConfirmationDialog extends StatelessWidget {
     return Dialog(
       backgroundColor: Colors.transparent,
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 420),
+        constraints: BoxConstraints(maxWidth: context.d.modalSm),
         padding: EdgeInsets.all(spacing.space8),
         decoration: BoxDecoration(
           color: colors.bgSurface,
           borderRadius: radii.r3xl,
-          border: Border.all(color: colors.borderPanel, width: 1),
+          border: Border.all(
+            color: colors.borderPanel,
+            width: context.d.borderThin,
+          ),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -48,14 +54,14 @@ class CloseConfirmationDialog extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 OutlinedButton(
-                  onPressed: () => Navigator.of(context).pop(),
+                  onPressed: () => Navigator.of(context).pop(false),
                   child: const Text('취소'),
                 ),
                 SizedBox(width: spacing.space4),
                 ElevatedButton(
                   onPressed: () {
-                    Navigator.of(context).pop();
-                    onConfirmClose();
+                    Navigator.of(context).pop(true);
+                    onConfirmClose?.call();
                   },
                   child: const Text('종료'),
                 ),

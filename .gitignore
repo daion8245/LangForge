@@ -43,3 +43,8 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Real mod JARs used as the local corpus (TECHNICAL.md 11.6).
+# They are third-party copyrighted files and must not be committed; keep them
+# on disk and point LANGFORGE_CORPUS_DIR at their folder.
+/test_fixtures/corpus/

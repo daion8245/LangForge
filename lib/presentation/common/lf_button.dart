@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/theme/lf_colors.dart';
 import '../../app/theme/lf_radii.dart';
+import '../../app/theme/lf_sizes.dart';
 import '../../app/theme/theme_extensions.dart';
 
 /// Button kinds from DESIGN.md 7.1. Each kind fixes its own height, radius and
@@ -72,7 +73,8 @@ class _LfButtonState extends State<LfButton> {
     final spacing = context.s;
     final typography = context.t;
 
-    final spec = _LfButtonSpec.of(widget.style, colors, radii);
+    final sizes = context.d;
+    final spec = _LfButtonSpec.of(widget.style, colors, radii, sizes);
     final isIconOnly = widget.label == null;
 
     Color background = spec.background;
@@ -109,8 +111,8 @@ class _LfButtonState extends State<LfButton> {
       children: [
         if (widget.isLoading)
           SizedBox(
-            width: _iconSize,
-            height: _iconSize,
+            width: sizes.iconMd,
+            height: sizes.iconMd,
             child: CircularProgressIndicator(
               strokeWidth: 2,
               valueColor: AlwaysStoppedAnimation<Color>(foreground),
@@ -118,7 +120,7 @@ class _LfButtonState extends State<LfButton> {
           )
         else if (widget.icon != null)
           IconTheme(
-            data: IconThemeData(color: foreground, size: _iconSize),
+            data: IconThemeData(color: foreground, size: sizes.iconMd),
             child: widget.icon!,
           ),
         if (labelText != null) ...[
@@ -135,86 +137,88 @@ class _LfButtonState extends State<LfButton> {
       ],
     );
 
-    Widget button = Semantics(
-      button: true,
-      enabled: _enabled,
-      label: widget.label ?? widget.tooltip,
-      child: Focus(
-        canRequestFocus: _enabled,
-        child: Builder(
-          builder: (context) {
-            final focused = Focus.of(context).hasFocus;
-            return MouseRegion(
-              cursor: _enabled
-                  ? SystemMouseCursors.click
-                  : SystemMouseCursors.basic,
-              onEnter: (_) => setState(() => _hovered = true),
-              onExit: (_) => setState(() => _hovered = false),
-              child: GestureDetector(
-                onTapDown: _enabled
-                    ? (_) => setState(() => _pressed = true)
-                    : null,
-                onTapCancel: _enabled
-                    ? () => setState(() => _pressed = false)
-                    : null,
-                onTapUp: _enabled
-                    ? (_) => setState(() => _pressed = false)
-                    : null,
-                onTap: _enabled ? widget.onPressed : null,
-                child: AnimatedContainer(
-                  duration: _pressed
-                      ? Duration.zero
-                      : const Duration(milliseconds: 150),
-                  height: spec.height,
-                  width: isIconOnly && widget.style == LfButtonStyle.icon
-                      ? spec.height
+    // Merged so a reader announces one control, not a labelled wrapper and an
+    // unlabelled tap target (TECHNICAL.md 15).
+    Widget button = MergeSemantics(
+      child: Semantics(
+        button: true,
+        enabled: _enabled,
+        // An icon-only button has no visible text, so the tooltip is the only
+        // thing a screen reader can read out (DESIGN.md 14 · TECHNICAL.md 15).
+        label: widget.label ?? widget.tooltip,
+        child: Focus(
+          canRequestFocus: _enabled,
+          child: Builder(
+            builder: (context) {
+              final focused = Focus.of(context).hasFocus;
+              return MouseRegion(
+                cursor: _enabled
+                    ? SystemMouseCursors.click
+                    : SystemMouseCursors.basic,
+                onEnter: (_) => setState(() => _hovered = true),
+                onExit: (_) => setState(() => _hovered = false),
+                child: GestureDetector(
+                  onTapDown: _enabled
+                      ? (_) => setState(() => _pressed = true)
                       : null,
-                  constraints: const BoxConstraints(
-                    minWidth: _minTouchTarget,
-                    minHeight: _minTouchTarget,
-                  ),
-                  alignment: Alignment.center,
-                  padding: widget.style == LfButtonStyle.icon
-                      // The square already centres the glyph; padding on top of
-                      // a fixed width would squeeze it.
-                      ? EdgeInsets.zero
-                      : EdgeInsets.symmetric(
-                          horizontal: isIconOnly
-                              ? spacing.space4
-                              : spacing.space6,
-                        ),
-                  decoration: BoxDecoration(
-                    color: background,
-                    borderRadius: spec.radius,
-                    border: Border.all(
-                      color: focused ? colors.accent : border,
-                      width: focused ? _focusRingWidth : _borderWidth,
+                  onTapCancel: _enabled
+                      ? () => setState(() => _pressed = false)
+                      : null,
+                  onTapUp: _enabled
+                      ? (_) => setState(() => _pressed = false)
+                      : null,
+                  onTap: _enabled ? widget.onPressed : null,
+                  child: AnimatedContainer(
+                    duration: _pressed
+                        ? Duration.zero
+                        : const Duration(milliseconds: 150),
+                    height: spec.height,
+                    width: isIconOnly && widget.style == LfButtonStyle.icon
+                        ? spec.height
+                        : null,
+                    constraints: BoxConstraints(
+                      minWidth: sizes.minTapTarget,
+                      minHeight: sizes.minTapTarget,
                     ),
+                    alignment: Alignment.center,
+                    padding: widget.style == LfButtonStyle.icon
+                        // The square already centres the glyph; padding on top of
+                        // a fixed width would squeeze it.
+                        ? EdgeInsets.zero
+                        : EdgeInsets.symmetric(
+                            horizontal: isIconOnly
+                                ? spacing.space4
+                                : spacing.space6,
+                          ),
+                    decoration: BoxDecoration(
+                      color: background,
+                      borderRadius: spec.radius,
+                      border: Border.all(
+                        color: focused ? colors.accent : border,
+                        width: focused ? sizes.borderThick : sizes.borderThin,
+                      ),
+                    ),
+                    child: content,
                   ),
-                  child: content,
                 ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         ),
       ),
     );
 
     if (widget.tooltip != null) {
-      button = Tooltip(message: widget.tooltip!, child: button);
+      button = Tooltip(
+        message: widget.tooltip!,
+        // The Semantics above already carries the label; letting the tooltip
+        // add a second node would make readers say it twice.
+        excludeFromSemantics: true,
+        child: button,
+      );
     }
     return button;
   }
-
-  /// DESIGN.md 8.1 — icons render at 16px inside controls.
-  static const double _iconSize = 16;
-
-  /// DESIGN.md 3 — click targets are never smaller than 24×24.
-  static const double _minTouchTarget = 24;
-
-  /// DESIGN.md 5.4 — every control border is 1px; focus uses a 2px accent ring.
-  static const double _borderWidth = 1;
-  static const double _focusRingWidth = 2;
 }
 
 /// Per-kind geometry and colours, straight from the DESIGN.md 7.1 table.
@@ -239,11 +243,16 @@ class _LfButtonSpec {
   final Color foreground;
   final FontWeight fontWeight;
 
-  static _LfButtonSpec of(LfButtonStyle style, LfColors colors, LfRadii radii) {
+  static _LfButtonSpec of(
+    LfButtonStyle style,
+    LfColors colors,
+    LfRadii radii,
+    LfSizes sizes,
+  ) {
     switch (style) {
       case LfButtonStyle.primary:
         return _LfButtonSpec(
-          height: 38,
+          height: sizes.buttonPrimary,
           radius: radii.r2xl,
           background: colors.accent,
           hoverBackground: colors.accentHover,
@@ -254,7 +263,7 @@ class _LfButtonSpec {
         );
       case LfButtonStyle.secondary:
         return _LfButtonSpec(
-          height: 28,
+          height: sizes.buttonSecondary,
           radius: radii.lg,
           background: colors.bgRaised,
           hoverBackground: colors.bgRaisedHover,
@@ -265,7 +274,7 @@ class _LfButtonSpec {
         );
       case LfButtonStyle.tertiary:
         return _LfButtonSpec(
-          height: 25,
+          height: sizes.buttonTertiary,
           radius: radii.md,
           background: Colors.transparent,
           hoverBackground: colors.bgRaised,
@@ -276,7 +285,7 @@ class _LfButtonSpec {
         );
       case LfButtonStyle.danger:
         return _LfButtonSpec(
-          height: 32,
+          height: sizes.buttonDanger,
           radius: radii.xl,
           background: colors.dangerSurface,
           hoverBackground: colors.dangerSurface,
@@ -287,7 +296,7 @@ class _LfButtonSpec {
         );
       case LfButtonStyle.icon:
         return _LfButtonSpec(
-          height: 28,
+          height: sizes.buttonSecondary,
           radius: radii.lg,
           background: colors.bgRaised,
           hoverBackground: colors.bgRaisedHover,

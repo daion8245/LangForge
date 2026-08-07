@@ -30,7 +30,7 @@ class StartScreenView extends StatelessWidget {
       backgroundColor: colors.bgBase,
       body: Center(
         child: Container(
-          constraints: const BoxConstraints(maxWidth: 680),
+          constraints: BoxConstraints(maxWidth: context.d.modalXl),
           padding: EdgeInsets.all(spacing.space8),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -39,11 +39,9 @@ class StartScreenView extends StatelessWidget {
               // Logo Header
               Text(
                 'LANGFORGE',
-                style: typography.overline.copyWith(
+                style: typography.display.copyWith(
                   color: colors.accent,
                   fontWeight: FontWeight.w800,
-                  fontSize: 16,
-                  letterSpacing: 0.14 * 16,
                 ),
               ),
               SizedBox(height: spacing.space4),
@@ -61,11 +59,14 @@ class StartScreenView extends StatelessWidget {
               SizedBox(height: spacing.space4),
 
               Container(
-                constraints: const BoxConstraints(maxHeight: 320),
+                constraints: BoxConstraints(maxHeight: context.d.recentList),
                 decoration: BoxDecoration(
                   color: colors.bgSurface,
                   borderRadius: radii.r2xl,
-                  border: Border.all(color: colors.borderPanel, width: 1),
+                  border: Border.all(
+                    color: colors.borderPanel,
+                    width: context.d.borderThin,
+                  ),
                 ),
                 child: recentProjects.isEmpty
                     ? Center(
@@ -82,8 +83,10 @@ class StartScreenView extends StatelessWidget {
                     : ListView.separated(
                         shrinkWrap: true,
                         itemCount: recentProjects.length,
-                        separatorBuilder: (context, index) =>
-                            Divider(height: 1, color: colors.borderSubtle),
+                        separatorBuilder: (context, index) => Divider(
+                          height: context.d.borderThin,
+                          color: colors.borderSubtle,
+                        ),
                         itemBuilder: (context, index) {
                           final proj = recentProjects[index];
                           final timeStr = _formatTime(proj.lastOpenedAt);
@@ -103,7 +106,7 @@ class StartScreenView extends StatelessWidget {
                                   SizedBox(width: spacing.space3),
                                   Icon(
                                     LucideIcons.triangleAlert,
-                                    size: 14,
+                                    size: context.d.iconSm,
                                     color: colors.warning,
                                   ),
                                 ],

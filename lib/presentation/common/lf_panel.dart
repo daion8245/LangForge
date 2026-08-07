@@ -36,7 +36,7 @@ class LfPanel extends StatelessWidget {
       decoration: BoxDecoration(
         color: bg,
         borderRadius: radii.r2xl,
-        border: Border.all(color: border, width: 1),
+        border: Border.all(color: border, width: context.d.borderThin),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -49,7 +49,12 @@ class LfPanel extends StatelessWidget {
                 vertical: spacing.space5,
               ),
               decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: border, width: 1)),
+                border: Border(
+                  bottom: BorderSide(
+                    color: border,
+                    width: context.d.borderThin,
+                  ),
+                ),
               ),
               child: Row(
                 children: [

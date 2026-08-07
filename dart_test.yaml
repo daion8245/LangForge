@@ -1,0 +1,7 @@
+# The corpus suite runs against real mod JARs that the repository does not
+# carry (TECHNICAL.md 11.6). Declaring the tag here keeps `--exclude-tags
+# corpus` — which CI uses — from failing on an unknown tag.
+#
+# Run it locally with: flutter test test/corpus --tags corpus
+tags:
+  corpus:

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../../app/theme/theme_extensions.dart';
-import '../../domain/provider/translation_provider.dart';
 import '../../infrastructure/db/app_database.dart';
 import '../shell/bottom_banner.dart';
 import '../shell/status_bar.dart';
@@ -29,11 +28,13 @@ class EditorShell extends StatefulWidget {
     this.onSelectNamespace,
     this.onToggleNamespaceExclusion,
     this.onSelectSourceFile,
+    this.onToggleInputFile,
     this.onAddFiles,
     this.onAddFolder,
     this.onRescan,
     this.onExport,
     this.onSearchChanged,
+    this.searchFocusNode,
     this.onStartTranslation,
     this.onPauseTranslation,
     this.onResumeTranslation,
@@ -42,8 +43,20 @@ class EditorShell extends StatefulWidget {
     this.onUpdateUserTranslation,
     this.onResetEntryToWait,
     this.onKeepSourceText,
+    this.projectName = 'Untitled Project',
+    this.isDirty = false,
+    this.onNewProject,
+    this.onOpenProject,
+    this.onSaveProject,
+    this.onSaveProjectAs,
+    this.onCloseProject,
+    this.onRenameProject,
+    this.onDismissBanner,
     this.isScanning = false,
     this.isTranslating = false,
+    this.isPaused = false,
+    this.translationMessage,
+    this.translationProgress,
     this.scanMessage,
     this.rejectedSummary = const [],
   });
@@ -70,17 +83,20 @@ class EditorShell extends StatefulWidget {
   final ValueChanged<String>? onSelectNamespace;
   final void Function(String nsId, bool excluded)? onToggleNamespaceExclusion;
   final ValueChanged<LanguageFile>? onSelectSourceFile;
+
+  /// Turning a JAR off takes all of its namespaces with it (AC-8.2).
+  final void Function(String inputFileId, bool enabled)? onToggleInputFile;
+
   final VoidCallback? onAddFiles;
   final VoidCallback? onAddFolder;
   final VoidCallback? onRescan;
   final VoidCallback? onExport;
   final ValueChanged<String>? onSearchChanged;
-  final void Function(
-    TranslationProvider provider,
-    AuthValues auth,
-    String model,
-  )?
-  onStartTranslation;
+
+  /// Owned by the workspace so `Ctrl+F` can move focus here.
+  final FocusNode? searchFocusNode;
+
+  final VoidCallback? onStartTranslation;
   final VoidCallback? onPauseTranslation;
   final VoidCallback? onResumeTranslation;
   final VoidCallback? onCancelScan;
@@ -89,8 +105,29 @@ class EditorShell extends StatefulWidget {
   final void Function(String entryId)? onResetEntryToWait;
   final void Function(String entryId)? onKeepSourceText;
 
+  /// Shown in the top bar and used as the default save file name (AC-10.9).
+  final String projectName;
+
+  final bool isDirty;
+  final VoidCallback? onNewProject;
+  final VoidCallback? onOpenProject;
+  final VoidCallback? onSaveProject;
+  final VoidCallback? onSaveProjectAs;
+  final VoidCallback? onCloseProject;
+  final VoidCallback? onRenameProject;
+  final VoidCallback? onDismissBanner;
+
   final bool isScanning;
+
+  /// True while a run holds the queue, paused runs included. Drives the locks
+  /// of EXPERIENCE.md 6.4.
   final bool isTranslating;
+
+  final bool isPaused;
+  final String? translationMessage;
+
+  /// 0..1, or null while the total is unknown.
+  final double? translationProgress;
   final String? scanMessage;
   final List<String> rejectedSummary;
 
@@ -105,11 +142,13 @@ class _EditorShellState extends State<EditorShell> {
   @override
   Widget build(BuildContext context) {
     final colors = context.c;
+    final spacing = context.s;
     final mediaQuery = MediaQuery.of(context);
     final width = mediaQuery.size.width;
 
-    final isWide = width >= 1300;
-    final isNarrow = width < 1024;
+    final sizes = context.d;
+    final isWide = width >= sizes.breakpointWide;
+    final isNarrow = width < sizes.breakpointNarrow;
 
     final selectedNs = widget.namespaces
         .where((ns) => ns.id == widget.selectedNamespaceId)
@@ -141,39 +180,55 @@ class _EditorShellState extends State<EditorShell> {
         children: [
           // Tab Bar header with view mode switcher
           Container(
-            height: 34,
+            height: sizes.tabBar,
             decoration: BoxDecoration(
               color: colors.bgBar,
               border: Border(
-                bottom: BorderSide(color: colors.borderDefault, width: 1),
+                bottom: BorderSide(
+                  color: colors.borderDefault,
+                  width: sizes.borderThin,
+                ),
               ),
             ),
-            padding: const EdgeInsets.symmetric(horizontal: 14),
+            padding: EdgeInsets.symmetric(horizontal: spacing.space7),
             child: Row(
               children: [
+                // The tab label yields before the view switcher, which the
+                // user must always be able to reach.
                 if (selectedNs != null)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: colors.bgTabActive,
-                      border: Border(
-                        top: BorderSide(color: colors.accent, width: 2),
+                  Flexible(
+                    child: Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: spacing.space7,
+                        vertical: spacing.space3,
                       ),
-                    ),
-                    child: Text(
-                      '${selectedNs.name}/ko_kr.json',
-                      style: context.t.codeSm.copyWith(
-                        color: colors.textPrimary,
+                      decoration: BoxDecoration(
+                        color: colors.bgTabActive,
+                        border: Border(
+                          top: BorderSide(
+                            color: colors.accent,
+                            width: sizes.borderThick,
+                          ),
+                        ),
+                      ),
+                      child: Text(
+                        '${selectedNs.name}/ko_kr.json',
+                        style: context.t.codeSm.copyWith(
+                          color: colors.textPrimary,
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   )
                 else
-                  Text(
-                    '전체 항목 목록 (${widget.totalEntryCount})',
-                    style: context.t.caption.copyWith(color: colors.textMuted),
+                  Flexible(
+                    child: Text(
+                      '전체 항목 목록 (${widget.totalEntryCount})',
+                      style: context.t.caption.copyWith(
+                        color: colors.textMuted,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                 const Spacer(),
                 // View Mode Switcher
@@ -182,9 +237,9 @@ class _EditorShellState extends State<EditorShell> {
                     InkWell(
                       onTap: () => setState(() => _activeViewMode = 'entries'),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
+                        padding: EdgeInsets.symmetric(
+                          horizontal: spacing.space6,
+                          vertical: spacing.space1,
                         ),
                         decoration: BoxDecoration(
                           color: _activeViewMode == 'entries'
@@ -202,13 +257,13 @@ class _EditorShellState extends State<EditorShell> {
                         ),
                       ),
                     ),
-                    const SizedBox(width: 4),
+                    SizedBox(width: spacing.space1),
                     InkWell(
                       onTap: () => setState(() => _activeViewMode = 'preview'),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
+                        padding: EdgeInsets.symmetric(
+                          horizontal: spacing.space6,
+                          vertical: spacing.space1,
                         ),
                         decoration: BoxDecoration(
                           color: _activeViewMode == 'preview'
@@ -250,18 +305,38 @@ class _EditorShellState extends State<EditorShell> {
                     onUpdateUserTranslation: widget.onUpdateUserTranslation,
                     onResetEntryToWait: widget.onResetEntryToWait,
                     onKeepSourceText: widget.onKeepSourceText,
+                    isTranslating: widget.isTranslating,
                   ),
           ),
         ],
       );
     }
 
+    // One instance, shown either docked or in the end drawer — the collapsed
+    // layout must not lose access to the engine settings (DESIGN.md 6.2).
+    SettingsPanel buildSettingsPanel({required bool isDocked}) => SettingsPanel(
+      isDocked: isDocked,
+      waitCount: waitCount,
+      isTranslating: widget.isTranslating,
+      isPaused: widget.isPaused,
+      onStartTranslation: () => widget.onStartTranslation?.call(),
+      onPauseTranslation: () => widget.onPauseTranslation?.call(),
+      onResumeTranslation: widget.onResumeTranslation,
+    );
+
     return Scaffold(
       key: _scaffoldKey,
       backgroundColor: colors.bgBase,
+      endDrawer: isWide
+          ? null
+          : Drawer(
+              width: sizes.settingsPanel,
+              backgroundColor: colors.bgSurface,
+              child: buildSettingsPanel(isDocked: false),
+            ),
       drawer: isNarrow
           ? Drawer(
-              width: 300,
+              width: sizes.explorerPanel,
               backgroundColor: colors.bgSurface,
               child: ProjectExplorer(
                 inputFiles: widget.inputFiles,
@@ -273,22 +348,39 @@ class _EditorShellState extends State<EditorShell> {
                   Navigator.of(context).pop();
                 },
                 onToggleNamespaceExclusion: widget.onToggleNamespaceExclusion,
+                onToggleInputFile: widget.onToggleInputFile,
+                isLocked: widget.isTranslating,
               ),
             )
           : null,
       body: Column(
         children: [
           // Top Bar
+          // 파일 추가·제거와 내보내기는 번역 실행 중 잠깁니다 (EXPERIENCE.md 6.4).
           TopBar(
+            projectName: widget.projectName,
+            isDirty: widget.isDirty,
             breadcrumbPath: breadcrumbPath,
-            onAddFiles: widget.onAddFiles,
-            onAddFolder: widget.onAddFolder,
-            onRescan: widget.onRescan,
-            onExport: widget.onExport,
+            onAddFiles: widget.isTranslating ? null : widget.onAddFiles,
+            onAddFolder: widget.isTranslating ? null : widget.onAddFolder,
+            onRescan: widget.isTranslating ? null : widget.onRescan,
+            onExport: widget.isTranslating ? null : widget.onExport,
+            onNewProject: widget.onNewProject,
+            onOpenProject: widget.onOpenProject,
+            onSaveProject: widget.onSaveProject,
+            onSaveProjectAs: widget.onSaveProjectAs,
+            onCloseProject: widget.onCloseProject,
+            onRenameProject: widget.isTranslating
+                ? null
+                : widget.onRenameProject,
+            isLocked: widget.isTranslating,
             onSearchChanged: widget.onSearchChanged,
+            searchFocusNode: widget.searchFocusNode,
             showLeftToggle: isNarrow,
             showRightToggle: !isWide,
             onToggleLeftPanel: () => _scaffoldKey.currentState?.openDrawer(),
+            onToggleRightPanel: () =>
+                _scaffoldKey.currentState?.openEndDrawer(),
           ),
 
           // Main 3-Panel Content
@@ -307,6 +399,8 @@ class _EditorShellState extends State<EditorShell> {
                         onSelectNamespace: widget.onSelectNamespace,
                         onToggleNamespaceExclusion:
                             widget.onToggleNamespaceExclusion,
+                        onToggleInputFile: widget.onToggleInputFile,
+                        isLocked: widget.isTranslating,
                       ),
 
                     // Center View
@@ -318,21 +412,7 @@ class _EditorShellState extends State<EditorShell> {
                     ),
 
                     // Right Settings Panel (visible if >= 1300px)
-                    if (isWide)
-                      SettingsPanel(
-                        waitCount: waitCount,
-                        isTranslating: widget.isTranslating,
-                        onStartTranslation: (provider, auth, model) {
-                          widget.onStartTranslation?.call(
-                            provider,
-                            auth,
-                            model,
-                          );
-                        },
-                        onPauseTranslation: () {
-                          widget.onPauseTranslation?.call();
-                        },
-                      ),
+                    if (isWide) buildSettingsPanel(isDocked: true),
                   ],
                 ),
 
@@ -341,12 +421,13 @@ class _EditorShellState extends State<EditorShell> {
                   Positioned(
                     left: 0,
                     right: 0,
-                    bottom: 12,
+                    bottom: spacing.space6,
                     child: Center(
                       child: BottomBanner(
-                        title: '${widget.rejectedSummary.length}개 항목 거부됨',
+                        title: '확인이 필요한 항목 ${widget.rejectedSummary.length}건',
                         description: widget.rejectedSummary.join('\n'),
                         type: BannerType.error,
+                        onDismiss: widget.onDismissBanner,
                       ),
                     ),
                   ),
@@ -359,8 +440,13 @@ class _EditorShellState extends State<EditorShell> {
             fileCount: widget.inputFiles.length,
             namespaceCount: widget.namespaces.length,
             totalEntryCount: widget.totalEntryCount,
-            statusMessage: widget.scanMessage,
+            statusMessage: widget.isTranslating
+                ? widget.translationMessage
+                : widget.scanMessage,
             isProgress: widget.isScanning || widget.isTranslating,
+            progressRatio: widget.isTranslating
+                ? widget.translationProgress
+                : null,
             onCancel: widget.isScanning
                 ? widget.onCancelScan
                 : (widget.isTranslating ? widget.onCancelTranslation : null),

@@ -22,6 +22,9 @@ class StatusBar extends StatelessWidget {
   final int totalEntryCount;
   final String? statusMessage;
   final bool isProgress;
+
+  /// `null` means the total is not known yet, which draws an indeterminate
+  /// bar. A ratio is never computed from a zero total (DESIGN.md 14).
   final double? progressRatio;
 
   /// Shown only while something is running. Long scans and translation runs
@@ -35,59 +38,82 @@ class StatusBar extends StatelessWidget {
     final spacing = context.s;
     final typography = context.t;
 
-    return Container(
-      height: 30,
-      decoration: BoxDecoration(
-        color: colors.bgBar,
-        border: Border(top: BorderSide(color: colors.borderDefault, width: 1)),
-      ),
-      padding: EdgeInsets.symmetric(horizontal: spacing.space7),
-      child: Row(
-        children: [
-          // Counts summary
-          Text(
-            '파일 $fileCount개  |  namespace $namespaceCount개  |  항목 ${_formatNumber(totalEntryCount)}개',
-            style: typography.caption.copyWith(color: colors.textSecondary),
+    // The bar's height is fixed by DESIGN.md 6.1, so its text cannot grow
+    // without bound. Chrome scales up to a point and then stops; the editing
+    // surface below still honours the full setting (TECHNICAL.md 15).
+    return MediaQuery.withClampedTextScaling(
+      maxScaleFactor: _maxChromeTextScale,
+      child: Container(
+        height: context.d.statusBar,
+        decoration: BoxDecoration(
+          color: colors.bgBar,
+          border: Border(
+            top: BorderSide(
+              color: colors.borderDefault,
+              width: context.d.borderThin,
+            ),
           ),
-
-          const Spacer(),
-
-          if (isProgress) ...[
-            SizedBox(
-              width: 120,
-              height: 4,
-              child: LinearProgressIndicator(
-                value: progressRatio,
-                backgroundColor: colors.bgRaised,
-                valueColor: AlwaysStoppedAnimation<Color>(colors.accent),
+        ),
+        padding: EdgeInsets.symmetric(horizontal: spacing.space7),
+        child: Row(
+          children: [
+            // Counts summary
+            Flexible(
+              child: Text(
+                '파일 $fileCount개  |  namespace $namespaceCount개  |  항목 ${_formatNumber(totalEntryCount)}개',
+                style: typography.caption.copyWith(color: colors.textSecondary),
+                overflow: TextOverflow.ellipsis,
               ),
             ),
-            SizedBox(width: spacing.space5),
-            if (onCancel != null) ...[
-              LfButton(
-                onPressed: onCancel,
-                icon: const Icon(LucideIcons.x),
-                style: LfButtonStyle.tertiary,
-                tooltip: cancelTooltip,
+
+            const Spacer(),
+
+            if (isProgress) ...[
+              SizedBox(
+                width: context.d.progressBarWidth,
+                height: context.d.progressBarHeight,
+                child: LinearProgressIndicator(
+                  value: progressRatio,
+                  backgroundColor: colors.bgRaised,
+                  valueColor: AlwaysStoppedAnimation<Color>(colors.accent),
+                ),
               ),
               SizedBox(width: spacing.space5),
+              // Numbers are never rendered as NaN% — an unknown total shows the
+              // em dash instead (DESIGN.md 14 · AGENTS.md 5.3).
+              Text(
+                progressRatio == null
+                    ? '—'
+                    : '${(progressRatio! * 100).round()}%',
+                style: typography.caption.copyWith(color: colors.textSecondary),
+              ),
+              SizedBox(width: spacing.space5),
+              if (onCancel != null) ...[
+                LfButton(
+                  onPressed: onCancel,
+                  icon: Icon(LucideIcons.x),
+                  style: LfButtonStyle.tertiary,
+                  tooltip: cancelTooltip,
+                ),
+                SizedBox(width: spacing.space5),
+              ],
             ],
-          ],
 
-          if (statusMessage != null)
-            Text(
-              statusMessage!,
-              style: typography.caption.copyWith(color: colors.textMuted),
-            )
-          else
-            Text(
-              '준비됨',
-              style: typography.caption.copyWith(color: colors.textMuted),
+            Flexible(
+              child: Text(
+                statusMessage ?? '준비됨',
+                style: typography.caption.copyWith(color: colors.textMuted),
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
-        ],
+          ],
+        ),
       ),
     );
   }
+
+  /// Fixed-height chrome stops scaling here (TECHNICAL.md 15).
+  static const double _maxChromeTextScale = 1.3;
 
   String _formatNumber(int number) {
     return number.toString().replaceAllMapped(

@@ -27,17 +27,24 @@ class SourceLangPickerView extends StatelessWidget {
 
     return Center(
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 520),
+        constraints: BoxConstraints(maxWidth: context.d.modalMd),
         padding: EdgeInsets.all(spacing.space11),
         decoration: BoxDecoration(
           color: colors.bgSurface,
           borderRadius: radii.r4xl,
-          border: Border.all(color: colors.borderPanel, width: 1),
+          border: Border.all(
+            color: colors.borderPanel,
+            width: context.d.borderThin,
+          ),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(LucideIcons.alertTriangle, size: 40, color: colors.warning),
+            Icon(
+              LucideIcons.alertTriangle,
+              size: context.d.iconXl,
+              color: colors.warning,
+            ),
             SizedBox(height: spacing.space6),
             Text(
               '기본 원본 언어 파일(en_us.json) 없음',
@@ -58,13 +65,18 @@ class SourceLangPickerView extends StatelessWidget {
               decoration: BoxDecoration(
                 color: colors.bgRaised,
                 borderRadius: radii.r2xl,
-                border: Border.all(color: colors.borderControl, width: 1),
+                border: Border.all(
+                  color: colors.borderControl,
+                  width: context.d.borderThin,
+                ),
               ),
               child: ListView.separated(
                 shrinkWrap: true,
                 itemCount: availableLanguageFiles.length,
-                separatorBuilder: (context, index) =>
-                    Divider(color: colors.borderSubtle, height: 1),
+                separatorBuilder: (context, index) => Divider(
+                  color: colors.borderSubtle,
+                  height: context.d.borderThin,
+                ),
                 itemBuilder: (context, index) {
                   final langFile = availableLanguageFiles[index];
                   return ListTile(
@@ -83,7 +95,7 @@ class SourceLangPickerView extends StatelessWidget {
                     ),
                     trailing: Icon(
                       LucideIcons.arrowRight,
-                      size: 16,
+                      size: context.d.iconMd,
                       color: colors.accent,
                     ),
                     onTap: () => onSelectSourceFile(langFile),
@@ -99,7 +111,7 @@ class SourceLangPickerView extends StatelessWidget {
                 LfButton(
                   onPressed: onExcludeNamespace,
                   label: '이 namespace 제외',
-                  icon: const Icon(LucideIcons.eyeOff, size: 16),
+                  icon: Icon(LucideIcons.eyeOff, size: context.d.iconMd),
                   style: LfButtonStyle.secondary,
                 ),
               ],

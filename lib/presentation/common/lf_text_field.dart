@@ -36,7 +36,10 @@ class LfTextField extends StatelessWidget {
       decoration: BoxDecoration(
         color: colors.bgRaised,
         borderRadius: radii.r2xl,
-        border: Border.all(color: colors.borderControl, width: 1),
+        border: Border.all(
+          color: colors.borderControl,
+          width: context.d.borderThin,
+        ),
       ),
       padding: EdgeInsets.symmetric(
         horizontal: spacing.space5,
@@ -46,7 +49,10 @@ class LfTextField extends StatelessWidget {
         children: [
           if (prefixIcon != null) ...[
             IconTheme(
-              data: IconThemeData(color: colors.textTertiary, size: 16),
+              data: IconThemeData(
+                color: colors.textTertiary,
+                size: context.d.iconMd,
+              ),
               child: prefixIcon!,
             ),
             SizedBox(width: spacing.space4),
@@ -73,7 +79,10 @@ class LfTextField extends StatelessWidget {
           if (suffixIcon != null) ...[
             SizedBox(width: spacing.space4),
             IconTheme(
-              data: IconThemeData(color: colors.textTertiary, size: 16),
+              data: IconThemeData(
+                color: colors.textTertiary,
+                size: context.d.iconMd,
+              ),
               child: suffixIcon!,
             ),
           ],

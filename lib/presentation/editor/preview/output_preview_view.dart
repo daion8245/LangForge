@@ -79,14 +79,21 @@ class OutputPreviewView extends StatelessWidget {
             decoration: BoxDecoration(
               color: colors.bgSurface,
               borderRadius: radii.r2xl,
-              border: Border.all(color: colors.borderPanel, width: 1),
+              border: Border.all(
+                color: colors.borderPanel,
+                width: context.d.borderThin,
+              ),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
-                    Icon(LucideIcons.archive, size: 16, color: colors.accent),
+                    Icon(
+                      LucideIcons.archive,
+                      size: context.d.iconMd,
+                      color: colors.accent,
+                    ),
                     SizedBox(width: spacing.space4),
                     Text(
                       'KO_Translation_Pack.zip',
@@ -157,15 +164,19 @@ class OutputPreviewView extends StatelessWidget {
   }) {
     final colors = context.c;
     return Padding(
-      padding: EdgeInsets.only(left: indent * 18.0, top: 4, bottom: 4),
+      padding: EdgeInsets.only(
+        left: indent * context.d.iconLg,
+        top: context.s.space1,
+        bottom: context.s.space1,
+      ),
       child: Row(
         children: [
           Icon(
             isFile ? LucideIcons.fileText : LucideIcons.folder,
-            size: 14,
+            size: context.d.iconSm,
             color: isFile ? colors.textSecondary : colors.accent,
           ),
-          const SizedBox(width: 8),
+          SizedBox(width: context.s.space5),
           Text(
             name,
             style: context.t.codeSm.copyWith(color: colors.textPrimary),
@@ -181,11 +192,14 @@ class OutputPreviewView extends StatelessWidget {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(14),
+      padding: EdgeInsets.all(context.s.space7),
       decoration: BoxDecoration(
         color: colors.bgRaised,
         borderRadius: radii.r2xl,
-        border: Border.all(color: colors.borderControl, width: 1),
+        border: Border.all(
+          color: colors.borderControl,
+          width: context.d.borderThin,
+        ),
       ),
       child: SelectableText(
         code,

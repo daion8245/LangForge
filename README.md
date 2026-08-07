@@ -42,8 +42,8 @@
 
 ```text
 lib/
-├── app/                  # 앱 테마 및 엔트리포인트 (Theme Tokens: colors, radii, spacing, typography)
-├── application/          # 비즈니스 유스케이스 & 상태 관리 (ScanController, ProjectController, TranslationRunner)
+├── app/                  # 앱 테마 및 엔트리포인트 (Theme Tokens: colors, radii, sizes, spacing, typography)
+├── application/          # 비즈니스 유스케이스 & 상태 관리 (ScanController, ProjectSession, TranslationRunner)
 ├── domain/               # 순수 Dart 규칙 & 검증 알고리즘 (TokenProtector, Multiset, MergePolicy, ExclusionPolicy)
 ├── infrastructure/       # 외부 시스템 연동 (Drift SQLite, Gemini Provider, Archive, Isolate Worker Pool)
 └── presentation/         # Flutter UI 계층 (S0 Start, S1 Empty, S2 Editor, S5 Export Modal, Common Widgets)
@@ -54,8 +54,12 @@ lib/
 ## 💻 실행 및 빌드 방법 (Getting Started)
 
 ### 사전 요구사항
-- Flutter SDK (v3.19.0 이상)
-- Dart SDK (v3.3.0 이상)
+
+- Flutter SDK (Dart SDK `^3.12.2` 를 포함하는 버전)
+- Visual Studio 2022 — **Desktop development with C++** 워크로드
+  - 개별 구성 요소에서 **최신 v143 빌드 도구용 C++ ATL** 을 함께 설치해야 합니다.
+    `flutter_secure_storage_windows` 가 `atlstr.h` 를 필요로 하며, 없으면 빌드가
+    `error C1083` 로 실패합니다.
 
 ### 1. 의존성 설치
 ```bash
@@ -64,7 +68,7 @@ flutter pub get
 
 ### 2. 코드 생성기 실행 (Drift / Riverpod)
 ```bash
-flutter pub run build_runner build --delete-conflicting-outputs
+dart run build_runner build --delete-conflicting-outputs
 ```
 
 ### 3. 디버그 실행
@@ -72,10 +76,57 @@ flutter pub run build_runner build --delete-conflicting-outputs
 flutter run -d windows
 ```
 
-### 4. Windows 릴리스 포터블 빌드
+### 4. 테스트
+```bash
+flutter test --exclude-tags corpus     # CI 가 실행하는 범위
+flutter test test/corpus --tags corpus # 실제 모드 코퍼스 (로컬 전용)
+```
+
+코퍼스 테스트는 실제 모드 JAR 을 사용합니다. 저작권 때문에 저장소에 포함하지 않으므로
+`test_fixtures/corpus/` 에 직접 넣거나 `LANGFORGE_CORPUS_DIR` 환경 변수로 폴더를 지정하세요.
+
+### 5. Windows 릴리스 포터블 빌드
 ```bash
 flutter build windows --release
 ```
+
+`build/windows/x64/runner/Release/` 폴더를 통째로 압축하면 포터블 배포본이 됩니다.
+
+---
+
+## 📦 설치 및 사용 (For Users)
+
+### 설치
+
+설치 관리자가 없습니다. ZIP 을 풀고 `langforge.exe` 를 실행하면 됩니다. 폴더를 지우면
+완전히 제거됩니다.
+
+> **SmartScreen 경고**
+> 코드 서명 인증서를 사용하지 않으므로 처음 실행할 때 Windows SmartScreen 이
+> "Windows의 PC 보호" 경고를 표시할 수 있습니다. **추가 정보 → 실행** 을 눌러 진행하세요.
+
+### API 키 발급
+
+번역에는 본인의 Google Gemini API 키가 필요합니다 (BYOK). 앱이 키를 대신 제공하지 않습니다.
+
+1. <https://aistudio.google.com/app/apikey> 에서 API 키를 발급합니다.
+2. 앱 우측 **작업 및 엔진 설정** 패널의 `Gemini API Key` 란에 붙여 넣습니다.
+3. `연결 테스트` 로 키가 유효한지 확인합니다.
+
+키는 Windows 자격 증명 관리자에 저장되며 프로젝트 파일·로그·보고서 어디에도 기록되지
+않습니다. 프로젝트 파일을 남에게 주어도 키는 따라가지 않습니다.
+
+### 저장되는 위치
+
+```text
+%APPDATA%\LangForge\registry.db     최근 프로젝트 목록
+%APPDATA%\LangForge\logs\           로그 (최대 5개 회전)
+사용자가 지정한 위치\<이름>.lfproj      프로젝트 (SQLite 파일 1개)
+Windows 자격 증명 관리자              API 키
+```
+
+이 도구는 번역 API 외의 어떤 서버와도 통신하지 않습니다. 텔레메트리·사용 통계·자동 오류
+리포팅이 없습니다.
 
 ---
 

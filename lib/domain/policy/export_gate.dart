@@ -58,6 +58,25 @@ class ExportPolicyOptions {
 }
 
 abstract final class ExportGate {
+  /// The namespaces an export writes files for.
+  ///
+  /// Broken and source-less namespaces are isolated, not exported — the rest of
+  /// the project still ships (AC-3.3 · AC-4.4). Kept here so the gate's
+  /// aggregate counts and the exporter's file list cannot drift apart.
+  static List<NamespaceUnit> writableNamespaces(
+    List<NamespaceUnit> namespaces,
+  ) {
+    return namespaces
+        .where(
+          (ns) =>
+              !ns.excluded &&
+              ns.selected &&
+              ns.state != NamespaceState.jsonError &&
+              ns.state != NamespaceState.noSource,
+        )
+        .toList();
+  }
+
   static ExportVerdict evaluate({
     required List<NamespaceUnit> namespaces,
     required List<TranslationEntry> entries,
@@ -72,7 +91,9 @@ abstract final class ExportGate {
       reasons.add(BlockReason.translationRunning);
     }
 
-    final activeNamespaces = namespaces.where((ns) => !ns.excluded).toList();
+    final activeNamespaces = namespaces
+        .where((ns) => !ns.excluded && ns.selected)
+        .toList();
     if (activeNamespaces.isEmpty) {
       reasons.add(BlockReason.noNamespaceSelected);
     }

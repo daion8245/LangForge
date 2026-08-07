@@ -1,8 +1,17 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../domain/model/entry_status.dart';
 import '../../infrastructure/db/app_database.dart';
 import '../../infrastructure/db/daos/entry_dao.dart';
 import '../db_provider.dart';
+
+/// The filter key the 문제 tab uses. It is not an [EntryStatus] — it stands for
+/// the group of statuses that need the user's attention (AC-7.7).
+const String problemStatusFilter = 'problem';
+
+/// 검증 실패 · 원문 유지 · 확인 필요. `빈 문자열 유지` is a normal outcome and is
+/// deliberately not in this list.
+const List<String> problemStatuses = <String>['invalid', 'fallback', 'confirm'];
 
 /// Which slice of the entry table the list is currently showing.
 class EntriesViewState {
@@ -28,7 +37,8 @@ class EntriesViewState {
 
   EntryQuery get query => EntryQuery(
     namespaceId: namespaceId,
-    status: statusFilter,
+    status: statusFilter == problemStatusFilter ? null : statusFilter,
+    statuses: statusFilter == problemStatusFilter ? problemStatuses : null,
     searchText: searchText,
     limit: limit,
   );

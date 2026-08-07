@@ -3,6 +3,7 @@
 // ignore_for_file: prefer_initializing_formals
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:drift/drift.dart';
 import 'package:logging/logging.dart';
@@ -60,9 +61,11 @@ class TranslationRunner {
     required AppDatabase db,
     required TranslationProvider provider,
     TextNormalizer normalizer = const UnicodeTextNormalizer(),
+    Duration Function(int attempt) backoffStrategy = backoff,
   }) : _db = db,
        _provider = provider,
-       _normalizer = normalizer;
+       _normalizer = normalizer,
+       _backoff = backoffStrategy;
 
   static final Logger _log = Logger('TranslationRunner');
 
@@ -78,6 +81,9 @@ class TranslationRunner {
   final AppDatabase _db;
   final TranslationProvider _provider;
   final TextNormalizer _normalizer;
+
+  /// Injectable so tests do not have to sit through real backoff waits.
+  final Duration Function(int attempt) _backoff;
 
   RunnerStatus _status = RunnerStatus.idle;
   CancellationToken _cancelToken = CancellationToken();
@@ -175,14 +181,41 @@ class TranslationRunner {
     }
   }
 
-  Future<List<Entry>> _selectEligibleEntries({required bool retryFailed}) {
+  /// The 대기 entries that may actually be sent.
+  ///
+  /// A namespace that is excluded, deselected, has no source language file, or
+  /// failed the JSON precheck never reaches the queue — its rows are isolated,
+  /// not translated (AC-3.2 · AC-3.3 · AC-4.4 · AC-4.6 · AC-8.2).
+  Future<List<Entry>> _selectEligibleEntries({
+    required bool retryFailed,
+  }) async {
     final statuses = <String>[
       EntryStatus.wait.wireName,
       if (retryFailed) EntryStatus.invalid.wireName,
     ];
-    return (_db.select(
-      _db.entries,
-    )..where((tbl) => tbl.status.isIn(statuses))).get();
+
+    final translatableNamespaceIds =
+        await (_db.select(_db.namespaces)..where(
+              (tbl) =>
+                  tbl.excluded.equals(false) &
+                  tbl.selected.equals(true) &
+                  tbl.state.isNotIn([
+                    NamespaceState.jsonError.wireName,
+                    NamespaceState.noSource.wireName,
+                    NamespaceState.excluded.wireName,
+                  ]),
+            ))
+            .get()
+            .then((rows) => rows.map((ns) => ns.id).toList());
+
+    if (translatableNamespaceIds.isEmpty) return const [];
+
+    return (_db.select(_db.entries)..where(
+          (tbl) =>
+              tbl.status.isIn(statuses) &
+              tbl.namespaceId.isIn(translatableNamespaceIds),
+        ))
+        .get();
   }
 
   /// Runs [batches] with at most `limits.maxConcurrentRequests` in flight.
@@ -202,8 +235,15 @@ class TranslationRunner {
       while (true) {
         if (aborted || _cancelToken.isCancelled) return;
 
+        // Pausing is one of the save points of TECHNICAL.md 6.4, so whatever
+        // finished before the pause reaches disk instead of waiting for a
+        // resume that may never come.
+        if (_pauseGate != null) await _flushDB(pending);
+
+        // Waiting here rather than returning is what makes 일시정지 → 재개
+        // continue the same queue instead of ending the run (AC-5.5).
         await _waitWhilePaused();
-        if (_cancelToken.isCancelled) return;
+        if (aborted || _cancelToken.isCancelled) return;
 
         if (nextIndex >= queue.length) return;
         final batch = queue[nextIndex++];
@@ -235,16 +275,16 @@ class TranslationRunner {
           _emitProgress('할당량 소진: ${error.message}', force: true);
           return;
         } on NetworkError catch (error) {
+          // The connection dropped, not the data. The batch keeps its 대기
+          // status so that resuming re-queues it (AC-5.10); marking it 검증
+          // 실패 would blame the entries for a network outage.
           _consecutiveNetworkErrors++;
-          pending.addAll(_markInvalid(batch, error.message));
-          _failedCount += batch.length;
+          queue.add(batch);
           _log.warning('Network error on batch of ${batch.length}', error);
 
           if (_consecutiveNetworkErrors >= networkFailurePauseThreshold) {
-            aborted = true;
-            _status = RunnerStatus.paused;
-            _emitProgress('네트워크 연결 실패가 이어져 자동으로 일시정지했습니다.', force: true);
-            return;
+            _pauseForNetworkOutage();
+            continue;
           }
         } on TranslationError catch (error, stackTrace) {
           // Retries are exhausted or the error is permanent. Record it on the
@@ -291,10 +331,24 @@ class TranslationRunner {
     _emitProgress('일시정지했습니다.', force: true);
   }
 
+  /// Stops the queue after repeated connection failures (EXPERIENCE.md 6.2).
+  /// The batches that failed are back in the queue, so 재개 retries them.
+  void _pauseForNetworkOutage() {
+    _status = RunnerStatus.paused;
+    _pauseGate ??= Completer<void>();
+    _log.warning(
+      'Paused: $_consecutiveNetworkErrors consecutive network errors',
+    );
+    _emitProgress('네트워크 연결이 끊겼습니다. 연결 후 재개하세요.', force: true);
+  }
+
   /// Continues a paused run from where it stopped.
   void resume() {
     if (_status != RunnerStatus.paused) return;
     _status = RunnerStatus.running;
+    // The outage that paused the run is over as far as the user is concerned;
+    // a fresh streak has to build up before it pauses itself again.
+    _consecutiveNetworkErrors = 0;
     final gate = _pauseGate;
     _pauseGate = null;
     if (gate != null && !gate.isCompleted) gate.complete();
@@ -447,15 +501,21 @@ class TranslationRunner {
           _log.warning('Rate limited $maxAttempts times; giving up on batch');
           rethrow;
         }
-        await _sleep(error.retryAfter ?? backoff(attempt));
+        await _sleep(error.retryAfter ?? _backoff(attempt));
       } on ServerError catch (_) {
         attempt++;
         if (attempt >= maxAttempts) rethrow;
-        await _sleep(backoff(attempt));
+        await _sleep(_backoff(attempt));
+      } on NetworkError catch (_) {
+        // Retryable per TECHNICAL.md 6.5. Only after the attempt cap does this
+        // surface to the caller as a connection outage.
+        attempt++;
+        if (attempt >= maxAttempts) rethrow;
+        await _sleep(_backoff(attempt));
       } on TimeoutError catch (_) {
         attempt++;
         if (attempt >= maxAttempts) rethrow;
-        await _sleep(backoff(attempt));
+        await _sleep(_backoff(attempt));
       }
     }
   }
@@ -503,7 +563,13 @@ class TranslationRunner {
           EntriesCompanion(
             id: Value(entry.id),
             status: Value(EntryStatus.invalid.wireName),
-            validationJson: const Value('자리표시자 훼손 또는 누락'),
+            newTranslation: const Value<String?>(null),
+            validationJson: Value(
+              jsonEncode({
+                'reason': 'placeholderLost',
+                'rejected': translated[i],
+              }),
+            ),
             updatedAt: Value(DateTime.now()),
           ),
         );
@@ -517,16 +583,32 @@ class TranslationRunner {
       );
 
       final verdict = MultisetValidator.validate(entry.sourceText, cleaned);
+
+      if (!verdict.isMatch) {
+        // A value that fails validation is never stored as a translation
+        // (AGENTS.md 2.1, AC-6.7). Writing it to newTranslation would let
+        // MergePolicy pick it up and ship it. The rejected text is kept in the
+        // validation detail instead, so the row can still show what came back.
+        results.add(
+          EntriesCompanion(
+            id: Value(entry.id),
+            status: Value(EntryStatus.invalid.wireName),
+            newTranslation: const Value<String?>(null),
+            validationJson: Value(
+              jsonEncode({'reason': 'tokenMismatch', 'rejected': cleaned}),
+            ),
+            updatedAt: Value(DateTime.now()),
+          ),
+        );
+        continue;
+      }
+
       results.add(
         EntriesCompanion(
           id: Value(entry.id),
-          status: Value(
-            verdict.isMatch
-                ? EntryStatus.done.wireName
-                : EntryStatus.invalid.wireName,
-          ),
+          status: Value(EntryStatus.done.wireName),
           newTranslation: Value(cleaned),
-          validationJson: Value(verdict.isMatch ? null : '변수 토큰 멀티셋 불일치'),
+          validationJson: const Value<String?>(null),
           updatedAt: Value(DateTime.now()),
         ),
       );
@@ -555,12 +637,14 @@ class TranslationRunner {
   /// written — a failed request has nothing trustworthy to store.
   List<EntriesCompanion> _markInvalid(List<Entry> batch, String reason) {
     final now = DateTime.now();
+    final detail = jsonEncode({'reason': 'requestFailed', 'detail': reason});
     return [
       for (final entry in batch)
         EntriesCompanion(
           id: Value(entry.id),
           status: Value(EntryStatus.invalid.wireName),
-          validationJson: Value(reason),
+          newTranslation: const Value<String?>(null),
+          validationJson: Value(detail),
           updatedAt: Value(now),
         ),
     ];

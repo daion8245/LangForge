@@ -335,6 +335,59 @@ pack.mcmeta 미리보기    { "pack": { "pack_format": 15 } }
 2px    활성 탭 상단 표시선, 선택된 행 좌측 표시선
 ```
 
+### 5.5 크기 토큰
+
+6.1·6.2·7절에 흩어져 있는 고정 치수를 한곳에 모읍니다. **새로 정한 값은 없습니다.** 구현이 이 표를 통해서만 치수에 접근하도록 하기 위한 목록입니다 (`AGENTS.md` 2.5).
+
+| 토큰 | 값 | 출처 |
+|---|---|---|
+| `size.topBar` | 46px | 6.1 상단 바 높이 |
+| `size.statusBar` | 30px | 6.1 상태 바 높이 |
+| `size.explorerPanel` | 300px | 6.1 좌 패널 폭 |
+| `size.settingsPanel` | 336px | 6.1 우 패널 폭 |
+| `size.editorMin` | 664px | 6.1 중앙 최소 폭 |
+| `size.tabBar` | 34px | 7.9 탭 바 높이 |
+| `size.filterBar` | 36px | 7.10 필터 바 높이 |
+| `size.treeRowFile` | 28px | 7.7 트리 1단계 행 |
+| `size.treeRowNamespace` | 26px | 7.7 트리 2단계 행 |
+| `size.buttonPrimary` | 38px | 7.1 Primary |
+| `size.buttonSecondary` | 28px | 7.1 Secondary · Icon |
+| `size.buttonTertiary` | 25px | 7.1 Tertiary |
+| `size.buttonDanger` | 32px | 7.1 Danger |
+| `size.checkbox` | 15px | 7.6 체크박스 |
+| `size.statusDot` | 6px | 7.7 상태 점 |
+| `size.iconSm` | 14px | 7절 인라인 아이콘 |
+| `size.iconMd` | 16px | 7절 버튼 아이콘 |
+| `size.iconLg` | 18px | 7절 토글 아이콘 |
+| `size.iconXl` | 40px | 7.12 안내 화면 아이콘 |
+| `size.searchField` | 200px | 6.1 상단 바 검색 입력 폭 |
+| `size.langLabel` | 48px | 7.10 대조 행의 언어 코드 열 폭 |
+| `size.modalSm` | 420px | 7.13 확인 대화상자 최대 폭 |
+| `size.modalMd` | 520px | 7.11 안내 화면 최대 폭 |
+| `size.modalLg` | 560px | 7.14 배너 최대 폭 |
+| `size.modalXl` | 680px | 7.2 시작 화면 최대 폭 |
+| `size.recentList` | 320px | 7.2 최근 목록 최대 높이 |
+| `size.borderThin` | 1px | 5.4 |
+| `size.borderThick` | 2px | 5.4 |
+| `size.minTapTarget` | 24px | 14절 검수 항목 |
+| `size.modalHeader` | 52px | 7.13 모달 머리글 높이 |
+| `size.modalFooter` | 60px | 7.13 모달 바닥글 높이 |
+| `size.progressBarWidth` | 120px | 7.8 상태 바 진행 막대 |
+| `size.progressBarHeight` | 4px | 7.8 상태 바 진행 막대 |
+| `size.emptyStateIcon` | 48px | 7.12 빈 화면 아이콘 |
+
+마지막 다섯 항목은 목업에 수치가 명시되어 있지 않아 구현 실측값을 그대로 토큰화한 것입니다. 값을 바꾸려면 이 표를 먼저 고칩니다.
+
+**반응형 분기점**
+
+| 토큰 | 값 | 출처 |
+|---|---|---|
+| `breakpoint.wide` | 1300px | 6.2 3분할 유지 하한 |
+| `breakpoint.narrow` | 1024px | 6.2 좌측 탐색기 접힘 하한 |
+| `breakpoint.mobile` | 768px | 6.2 모바일 레이아웃 전환점 **[모바일 Phase]** |
+
+코드에서는 `context.d.topBar` 형태로 접근합니다. 색 `context.c` · 간격 `context.s` · 반경 `context.r` · 타이포 `context.t` 와 같은 규칙입니다.
+
 ---
 
 ## 6. 레이아웃

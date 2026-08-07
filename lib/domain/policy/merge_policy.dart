@@ -30,7 +30,15 @@ abstract final class MergePolicy {
 
   /// Status to show in the list, which can differ from the stored status while
   /// a user edit is awaiting review.
+  ///
+  /// `원문 유지` and `빈 문자열 유지` are already decisions, not drafts. Both are
+  /// written by explicitly choosing them, so showing them as `확인 필요` would
+  /// ask the user to re-confirm what they just confirmed.
   static EntryStatus resolveStatus(TranslationEntry entry) {
+    if (entry.status == EntryStatus.fallback ||
+        entry.status == EntryStatus.empty) {
+      return entry.status;
+    }
     if (entry.userEdited && entry.userTranslation != null) {
       return EntryStatus.confirm;
     }

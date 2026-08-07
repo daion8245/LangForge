@@ -5,6 +5,7 @@ import 'package:archive/archive.dart';
 import 'package:path/path.dart' as p;
 
 import '../../domain/model/translation_entry.dart';
+import '../../domain/policy/export_gate.dart';
 import '../../domain/policy/merge_policy.dart';
 import '../../domain/validation/json_rebuilder.dart';
 import 'pack_meta_builder.dart';
@@ -43,7 +44,7 @@ abstract final class ResourcePackExporter {
     final tempDir = Directory.systemTemp.createTempSync('langforge_export_');
 
     try {
-      final activeNamespaces = namespaces.where((ns) => !ns.excluded).toList();
+      final activeNamespaces = ExportGate.writableNamespaces(namespaces);
 
       final nsJsonContents = <String, String>{};
       for (final ns in activeNamespaces) {

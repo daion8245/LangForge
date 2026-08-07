@@ -17,12 +17,15 @@ class JsonErrorView extends StatelessWidget {
 
     return Center(
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 560),
+        constraints: BoxConstraints(maxWidth: context.d.modalLg),
         padding: EdgeInsets.all(spacing.space11),
         decoration: BoxDecoration(
           color: colors.dangerSurface,
           borderRadius: radii.r4xl,
-          border: Border.all(color: colors.dangerBorder, width: 2),
+          border: Border.all(
+            color: colors.dangerBorder,
+            width: context.d.borderThick,
+          ),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -30,7 +33,11 @@ class JsonErrorView extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(LucideIcons.alertTriangle, size: 28, color: colors.danger),
+                Icon(
+                  LucideIcons.alertTriangle,
+                  size: context.d.iconXl,
+                  color: colors.danger,
+                ),
                 SizedBox(width: spacing.space5),
                 Text(
                   'JSON 파싱 오류 격리됨',
@@ -53,7 +60,10 @@ class JsonErrorView extends StatelessWidget {
               decoration: BoxDecoration(
                 color: colors.bgSurface,
                 borderRadius: radii.r2xl,
-                border: Border.all(color: colors.dangerBorder, width: 1),
+                border: Border.all(
+                  color: colors.dangerBorder,
+                  width: context.d.borderThin,
+                ),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,

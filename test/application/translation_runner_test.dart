@@ -4,6 +4,7 @@ import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:langforge/application/translation/translation_runner.dart';
+import 'package:langforge/domain/protection/token_protector.dart';
 import 'package:langforge/domain/provider/translation_error.dart';
 import 'package:langforge/domain/provider/translation_provider.dart';
 import 'package:langforge/infrastructure/db/app_database.dart';
@@ -289,13 +290,176 @@ void main() {
         textsPerRequest: 10,
         onTranslate: (_) async => throw const NetworkError(),
       );
+      final runner = TranslationRunner(
+        db: db,
+        provider: provider,
+        backoffStrategy: (_) => Duration.zero,
+      );
+
+      final run = runner.startTranslation(auth: auth);
+
+      // The run holds its place in the queue rather than ending, so the user
+      // can reconnect and resume (AC-5.10).
+      while (runner.status != RunnerStatus.paused) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+
+      // An outage is not the entries' fault: nothing is marked 검증 실패.
+      final duringOutage = await allEntries();
+      expect(duringOutage.every((e) => e.status == 'wait'), isTrue);
+
+      runner.cancel();
+      await run;
+    });
+
+    test('Resuming after an outage finishes the queue', () async {
+      await seedEntries(30);
+
+      var failing = true;
+      final provider = ScriptedProvider(
+        concurrency: 1,
+        textsPerRequest: 10,
+        onTranslate: (request) async {
+          if (failing) throw const NetworkError();
+          return request.texts.map((t) => '번역_$t').toList();
+        },
+      );
+      final runner = TranslationRunner(
+        db: db,
+        provider: provider,
+        backoffStrategy: (_) => Duration.zero,
+      );
+
+      final run = runner.startTranslation(auth: auth);
+      while (runner.status != RunnerStatus.paused) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+
+      failing = false;
+      runner.resume();
+      await run;
+
+      // The batches that failed were re-queued, not dropped.
+      final entries = await allEntries();
+      expect(entries.where((e) => e.status == 'done').length, equals(30));
+    });
+  });
+
+  group('Validation', () {
+    test('A token mismatch is never stored as a translation', () async {
+      await seedEntries(1);
+      await (db.update(db.entries)).write(
+        EntriesCompanion(
+          sourceText: const Value('Deals %s damage to %s'),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+
+      // Every placeholder comes back, so restoration succeeds — but one of
+      // them was duplicated, so the token multiset no longer matches.
+      final provider = ScriptedProvider(
+        onTranslate: (request) async => <String>[
+          '${request.texts.first} ${TokenProtector.placeholder(0)}',
+        ],
+      );
       final runner = TranslationRunner(db: db, provider: provider);
 
       await runner.startTranslation(auth: auth);
 
-      expect(runner.status, equals(RunnerStatus.paused));
+      final entry = (await allEntries()).single;
+      expect(entry.status, equals('invalid'));
+      expect(
+        entry.newTranslation,
+        isNull,
+        reason: 'AGENTS.md 2.1 — a rejected value must not be stored',
+      );
+      expect(entry.validationJson, contains('tokenMismatch'));
+    });
+
+    test('A validated translation is stored', () async {
+      await seedEntries(1);
+      await (db.update(db.entries)).write(
+        EntriesCompanion(
+          sourceText: const Value('Deals %s damage'),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+
+      final provider = ScriptedProvider(
+        onTranslate: (request) async => <String>['${request.texts.first} 피해'],
+      );
+      final runner = TranslationRunner(db: db, provider: provider);
+
+      await runner.startTranslation(auth: auth);
+
+      final entry = (await allEntries()).single;
+      expect(entry.status, equals('done'));
+      expect(entry.newTranslation, contains('%s'));
+    });
+  });
+
+  group('Namespace eligibility', () {
+    test('Excluded and broken namespaces never enter the queue', () async {
+      await seedEntries(2);
+      final now = DateTime.now();
+
+      await db
+          .into(db.namespaces)
+          .insert(
+            NamespacesCompanion.insert(
+              id: 'nsExcluded',
+              inputFileId: 'f1',
+              name: 'excluded',
+              state: 'ok',
+              excluded: const Value(true),
+            ),
+          );
+      await db
+          .into(db.namespaces)
+          .insert(
+            NamespacesCompanion.insert(
+              id: 'nsBroken',
+              inputFileId: 'f1',
+              name: 'broken',
+              state: 'jsonError',
+            ),
+          );
+      await db.batch((b) {
+        b.insertAll(db.entries, [
+          EntriesCompanion.insert(
+            id: 'x1',
+            namespaceId: 'nsExcluded',
+            key: 'k',
+            keyOrder: 0,
+            sourceText: 'Hidden',
+            status: 'wait',
+            updatedAt: now,
+          ),
+          EntriesCompanion.insert(
+            id: 'x2',
+            namespaceId: 'nsBroken',
+            key: 'k',
+            keyOrder: 0,
+            sourceText: 'Broken',
+            status: 'wait',
+            updatedAt: now,
+          ),
+        ]);
+      });
+
+      final runner = TranslationRunner(db: db, provider: ScriptedProvider());
+      await runner.startTranslation(auth: auth);
+
       final entries = await allEntries();
-      expect(entries.where((e) => e.status == 'wait'), isNotEmpty);
+      expect(entries.firstWhere((e) => e.id == 'x1').status, equals('wait'));
+      expect(entries.firstWhere((e) => e.id == 'x2').status, equals('wait'));
+      // The healthy namespace still completed (AC-3.3).
+      expect(
+        entries
+            .where((e) => e.namespaceId == 'ns1')
+            .every((e) => e.status == 'done'),
+        isTrue,
+      );
     });
   });
 

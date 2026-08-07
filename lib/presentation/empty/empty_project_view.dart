@@ -67,14 +67,14 @@ class _EmptyProjectViewState extends State<EmptyProjectView> {
         body: Center(
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 200),
-            constraints: const BoxConstraints(maxWidth: 520),
+            constraints: BoxConstraints(maxWidth: context.d.modalMd),
             padding: EdgeInsets.all(spacing.space11),
             decoration: BoxDecoration(
               color: _isDraggingOver ? colors.bgSelected : colors.bgSurface,
               borderRadius: radii.r4xl,
               border: Border.all(
                 color: _isDraggingOver ? colors.accent : colors.borderDashed,
-                width: 2,
+                width: context.d.borderThick,
               ),
             ),
             child: Column(
@@ -82,7 +82,7 @@ class _EmptyProjectViewState extends State<EmptyProjectView> {
               children: [
                 Icon(
                   LucideIcons.uploadCloud,
-                  size: 48,
+                  size: context.d.emptyStateIcon,
                   color: _isDraggingOver ? colors.accent : colors.textMuted,
                 ),
                 SizedBox(height: spacing.space8),
@@ -107,14 +107,17 @@ class _EmptyProjectViewState extends State<EmptyProjectView> {
                     LfButton(
                       onPressed: _pickFiles,
                       label: 'JAR / ZIP 파일 선택',
-                      icon: const Icon(LucideIcons.filePlus, size: 16),
+                      icon: Icon(LucideIcons.filePlus, size: context.d.iconMd),
                       style: LfButtonStyle.primary,
                     ),
                     SizedBox(width: spacing.space6),
                     LfButton(
                       onPressed: _pickFolder,
                       label: 'mods 폴더 선택',
-                      icon: const Icon(LucideIcons.folderPlus, size: 16),
+                      icon: Icon(
+                        LucideIcons.folderPlus,
+                        size: context.d.iconMd,
+                      ),
                       style: LfButtonStyle.secondary,
                     ),
                   ],

@@ -72,18 +72,18 @@ class _BottomBannerState extends State<BottomBanner> {
     }
 
     return Container(
-      constraints: const BoxConstraints(maxWidth: 560),
+      constraints: BoxConstraints(maxWidth: context.d.modalLg),
       margin: EdgeInsets.only(bottom: spacing.space6),
       padding: EdgeInsets.all(spacing.space7),
       decoration: BoxDecoration(
         color: bg,
         borderRadius: radii.r3xl,
-        border: Border.all(color: border, width: 1),
-        boxShadow: const [
+        border: Border.all(color: border, width: context.d.borderThin),
+        boxShadow: [
           BoxShadow(
-            color: Color(0x80000000),
+            color: colors.bgScrim,
             blurRadius: 32,
-            offset: Offset(0, 12),
+            offset: const Offset(0, 12),
           ),
         ],
       ),
@@ -118,7 +118,11 @@ class _BottomBannerState extends State<BottomBanner> {
           InkWell(
             onTap: widget.onDismiss,
             borderRadius: radii.xs,
-            child: Icon(LucideIcons.x, size: 16, color: colors.textMuted),
+            child: Icon(
+              LucideIcons.x,
+              size: context.d.iconMd,
+              color: colors.textMuted,
+            ),
           ),
         ],
       ),

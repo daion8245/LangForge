@@ -24,6 +24,7 @@ class ExportModalView extends StatefulWidget {
     required this.namespaces,
     required this.entries,
     required this.isTranslating,
+    this.hasUnresolvedConflict = false,
     required this.mcVersionsJsonStr,
     required this.onExportConfirmed,
   });
@@ -31,6 +32,12 @@ class ExportModalView extends StatefulWidget {
   final List<NamespaceUnit> namespaces;
   final List<TranslationEntry> entries;
   final bool isTranslating;
+
+  /// Unresolved conflicts block export outright (AC-9.2). Resolving them is a
+  /// 1.0 screen (AC-8.6); until then the only way past is to exclude one of the
+  /// namespaces involved.
+  final bool hasUnresolvedConflict;
+
   final String mcVersionsJsonStr;
   final void Function(
     ExportFormatOption format,
@@ -82,6 +89,7 @@ class _ExportModalViewState extends State<ExportModalView> {
       namespaces: widget.namespaces,
       entries: widget.entries,
       isTranslating: widget.isTranslating,
+      hasUnresolvedConflict: widget.hasUnresolvedConflict,
       options: policyOptions,
     );
 
@@ -95,11 +103,14 @@ class _ExportModalViewState extends State<ExportModalView> {
       backgroundColor: Colors.transparent,
       insetPadding: EdgeInsets.all(spacing.space8),
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 560),
+        constraints: BoxConstraints(maxWidth: context.d.modalLg),
         decoration: BoxDecoration(
           color: colors.bgSurface,
           borderRadius: radii.r4xl,
-          border: Border.all(color: colors.borderPanel, width: 1),
+          border: Border.all(
+            color: colors.borderPanel,
+            width: context.d.borderThin,
+          ),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -107,11 +118,14 @@ class _ExportModalViewState extends State<ExportModalView> {
           children: [
             // Modal Header
             Container(
-              height: 52,
+              height: context.d.modalHeader,
               padding: EdgeInsets.symmetric(horizontal: spacing.space8),
               decoration: BoxDecoration(
                 border: Border(
-                  bottom: BorderSide(color: colors.borderDefault, width: 1),
+                  bottom: BorderSide(
+                    color: colors.borderDefault,
+                    width: context.d.borderThin,
+                  ),
                 ),
               ),
               child: Row(
@@ -127,7 +141,7 @@ class _ExportModalViewState extends State<ExportModalView> {
                   IconButton(
                     icon: Icon(
                       LucideIcons.x,
-                      size: 18,
+                      size: context.d.iconLg,
                       color: colors.textMuted,
                     ),
                     onPressed: () => Navigator.of(context).pop(),
@@ -158,7 +172,7 @@ class _ExportModalViewState extends State<ExportModalView> {
                         borderRadius: radii.r2xl,
                         border: Border.all(
                           color: colors.borderControl,
-                          width: 1,
+                          width: context.d.borderThin,
                         ),
                       ),
                       child: Row(
@@ -207,13 +221,13 @@ class _ExportModalViewState extends State<ExportModalView> {
                     ),
                     SizedBox(height: spacing.space3),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      padding: EdgeInsets.symmetric(horizontal: spacing.space7),
                       decoration: BoxDecoration(
                         color: colors.bgRaised,
                         borderRadius: radii.r2xl,
                         border: Border.all(
                           color: colors.borderControl,
-                          width: 1,
+                          width: context.d.borderThin,
                         ),
                       ),
                       child: DropdownButtonHideUnderline(
@@ -313,7 +327,7 @@ class _ExportModalViewState extends State<ExportModalView> {
                           borderRadius: radii.r2xl,
                           border: Border.all(
                             color: colors.dangerBorder,
-                            width: 1,
+                            width: context.d.borderThin,
                           ),
                         ),
                         child: Text(
@@ -331,11 +345,14 @@ class _ExportModalViewState extends State<ExportModalView> {
 
             // Modal Footer
             Container(
-              height: 60,
+              height: context.d.modalFooter,
               padding: EdgeInsets.symmetric(horizontal: spacing.space8),
               decoration: BoxDecoration(
                 border: Border(
-                  top: BorderSide(color: colors.borderDefault, width: 1),
+                  top: BorderSide(
+                    color: colors.borderDefault,
+                    width: context.d.borderThin,
+                  ),
                 ),
               ),
               child: Row(
@@ -373,7 +390,7 @@ class _ExportModalViewState extends State<ExportModalView> {
     return Column(
       children: [
         Text(value, style: context.t.title.copyWith(color: color)),
-        const SizedBox(height: 2),
+        SizedBox(height: context.s.space1),
         Text(
           label,
           style: context.t.caption.copyWith(color: context.c.textMuted),

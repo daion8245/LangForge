@@ -90,7 +90,10 @@ JAR/ZIP/폴더 입력
 ```text
 ✗ 색 · 크기 · 간격 · 반경 · 글꼴을 하드코딩하지 않는다.
    금지  Color(0xFF4FC0A1) · EdgeInsets.all(14) · TextStyle(fontSize: 12.5) · BorderRadius.circular(9)
+         SizedBox(height: 46) · Icon(size: 16) · width >= 1300
    허용  context.c.accent · EdgeInsets.all(context.s.space7) · context.t.bodySm · context.r.md
+         context.d.topBar · context.d.iconMd · width >= context.d.breakpointWide
+   크기 토큰 목록은 DESIGN.md 5.5.
 ✗ 색만으로 상태를 구분하지 않는다. 항상 텍스트 라벨을 함께 표시한다.
 ✗ 목록을 ListView(children: [...]) 로 만들지 않는다. 항상 builder 로 가상화한다.
    이 앱은 항목 48,000개를 다룬다.

@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../../app/theme/theme_extensions.dart';
+import '../../../application/entries/entries_page_controller.dart';
 import '../../../domain/model/entry_status.dart';
 import '../../../domain/policy/merge_policy.dart';
 import '../../../domain/protection/multiset.dart';
@@ -23,6 +26,7 @@ class EntriesListView extends StatefulWidget {
     this.onUpdateUserTranslation,
     this.onResetEntryToWait,
     this.onKeepSourceText,
+    this.isTranslating = false,
   });
 
   /// The loaded page, not the whole table.
@@ -46,12 +50,21 @@ class EntriesListView extends StatefulWidget {
   final void Function(String entryId)? onResetEntryToWait;
   final void Function(String entryId)? onKeepSourceText;
 
+  /// While a run is in flight the translation column is read-only
+  /// (EXPERIENCE.md 6.4).
+  final bool isTranslating;
+
   @override
   State<EntriesListView> createState() => _EntriesListViewState();
 }
 
 class _EntriesListViewState extends State<EntriesListView> {
   final ScrollController _scrollController = ScrollController();
+
+  /// Typing writes through to the database so the status flips to 확인 필요 as
+  /// the user types (AC-7.1), but not on literally every keystroke.
+  Timer? _editDebounce;
+  static const Duration _editDebounceDelay = Duration(milliseconds: 300);
 
   @override
   void initState() {
@@ -61,10 +74,23 @@ class _EntriesListViewState extends State<EntriesListView> {
 
   @override
   void dispose() {
+    _editDebounce?.cancel();
     _scrollController
       ..removeListener(_onScroll)
       ..dispose();
     super.dispose();
+  }
+
+  void _submitEdit(String entryId, String value) {
+    _editDebounce?.cancel();
+    widget.onUpdateUserTranslation?.call(entryId, value);
+  }
+
+  void _queueEdit(String entryId, String value) {
+    _editDebounce?.cancel();
+    _editDebounce = Timer(_editDebounceDelay, () {
+      widget.onUpdateUserTranslation?.call(entryId, value);
+    });
   }
 
   /// Pull the next page in before the user reaches the bottom, so scrolling
@@ -87,296 +113,328 @@ class _EntriesListViewState extends State<EntriesListView> {
 
     final filtered = widget.entries;
 
-    return Column(
-      children: [
-        // Status Filter Bar
-        Container(
-          height: 36,
-          padding: EdgeInsets.symmetric(horizontal: spacing.space7),
-          decoration: BoxDecoration(
-            color: colors.bgSurface,
-            border: Border(
-              bottom: BorderSide(color: colors.borderDefault, width: 1),
+    // Tab walks the visible rows before leaving the editor (TECHNICAL.md 15).
+    return FocusTraversalGroup(
+      child: Column(
+        children: [
+          // Status Filter Bar
+          Container(
+            height: context.d.filterBar,
+            padding: EdgeInsets.symmetric(horizontal: spacing.space7),
+            decoration: BoxDecoration(
+              color: colors.bgSurface,
+              border: Border(
+                bottom: BorderSide(
+                  color: colors.borderDefault,
+                  width: context.d.borderThin,
+                ),
+              ),
+            ),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _buildFilterTab(context, 'all', '전체 (${_countFor('all')})'),
+                  SizedBox(width: spacing.space4),
+                  _buildFilterTab(context, 'wait', '대기 (${_countFor('wait')})'),
+                  SizedBox(width: spacing.space4),
+                  _buildFilterTab(
+                    context,
+                    'kept',
+                    '기존유지 (${_countFor('kept')})',
+                  ),
+                  SizedBox(width: spacing.space4),
+                  _buildFilterTab(
+                    context,
+                    'invalid',
+                    '검증실패 (${_countFor('invalid')})',
+                  ),
+                  SizedBox(width: spacing.space4),
+                  _buildFilterTab(context, 'done', '완료 (${_countFor('done')})'),
+                  SizedBox(width: spacing.space4),
+                  _buildFilterTab(
+                    context,
+                    problemStatusFilter,
+                    '문제 (${_countFor(problemStatusFilter)})',
+                  ),
+                ],
+              ),
             ),
           ),
-          child: Row(
-            children: [
-              _buildFilterTab(context, 'all', '전체 (${_countFor('all')})'),
-              SizedBox(width: spacing.space4),
-              _buildFilterTab(context, 'wait', '대기 (${_countFor('wait')})'),
-              SizedBox(width: spacing.space4),
-              _buildFilterTab(context, 'kept', '기존유지 (${_countFor('kept')})'),
-              SizedBox(width: spacing.space4),
-              _buildFilterTab(
-                context,
-                'invalid',
-                '검증실패 (${_countFor('invalid')})',
-              ),
-              SizedBox(width: spacing.space4),
-              _buildFilterTab(context, 'done', '완료 (${_countFor('done')})'),
-            ],
-          ),
-        ),
 
-        // Virtualized Entries List
-        Expanded(
-          child: filtered.isEmpty
-              ? Center(
-                  child: Text(
-                    '표시할 항목이 없습니다.',
-                    style: typography.bodySm.copyWith(color: colors.textMuted),
-                  ),
-                )
-              : ListView.builder(
-                  controller: _scrollController,
-                  itemCount: filtered.length + (widget.hasMore ? 1 : 0),
-                  itemBuilder: (context, index) {
-                    if (index >= filtered.length) {
-                      return Padding(
-                        padding: EdgeInsets.all(spacing.space7),
-                        child: Center(
-                          child: Text(
-                            '항목을 더 불러오는 중…',
-                            style: typography.caption.copyWith(
-                              color: colors.textMuted,
+          // Virtualized Entries List
+          Expanded(
+            child: filtered.isEmpty
+                ? Center(
+                    child: Text(
+                      '표시할 항목이 없습니다.',
+                      style: typography.bodySm.copyWith(
+                        color: colors.textMuted,
+                      ),
+                    ),
+                  )
+                : ListView.builder(
+                    controller: _scrollController,
+                    itemCount: filtered.length + (widget.hasMore ? 1 : 0),
+                    itemBuilder: (context, index) {
+                      if (index >= filtered.length) {
+                        return Padding(
+                          padding: EdgeInsets.all(spacing.space7),
+                          child: Center(
+                            child: Text(
+                              '항목을 더 불러오는 중…',
+                              style: typography.caption.copyWith(
+                                color: colors.textMuted,
+                              ),
+                            ),
+                          ),
+                        );
+                      }
+                      final entry = filtered[index];
+                      final domainEntry = entry.toDomain();
+                      final statusType = _mapStatusType(
+                        MergePolicy.resolveStatus(domainEntry),
+                      );
+                      final targetText = MergePolicy.resolveFinal(domainEntry);
+
+                      final multisetResult = MultisetValidator.validate(
+                        entry.sourceText,
+                        targetText,
+                      );
+
+                      return Container(
+                        decoration: BoxDecoration(
+                          border: Border(
+                            bottom: BorderSide(
+                              color: colors.borderSubtle,
+                              width: context.d.borderThin,
                             ),
                           ),
                         ),
-                      );
-                    }
-                    final entry = filtered[index];
-                    final domainEntry = entry.toDomain();
-                    final statusType = _mapStatusType(
-                      MergePolicy.resolveStatus(domainEntry),
-                    );
-                    final targetText = MergePolicy.resolveFinal(domainEntry);
-
-                    final multisetResult = MultisetValidator.validate(
-                      entry.sourceText,
-                      targetText,
-                    );
-
-                    return Container(
-                      decoration: BoxDecoration(
-                        border: Border(
-                          bottom: BorderSide(
-                            color: colors.borderSubtle,
-                            width: 1,
-                          ),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: spacing.space8,
+                          vertical: spacing.space6,
                         ),
-                      ),
-                      padding: EdgeInsets.symmetric(
-                        horizontal: spacing.space8,
-                        vertical: spacing.space6,
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Main Content
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                // Key
-                                Text(
-                                  entry.key,
-                                  style: typography.codeBody.copyWith(
-                                    color: colors.textPrimary,
-                                    fontWeight: FontWeight.w600,
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Main Content
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  // Key
+                                  Text(
+                                    entry.key,
+                                    style: typography.codeBody.copyWith(
+                                      color: colors.textPrimary,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
-                                ),
-                                SizedBox(height: spacing.space3),
+                                  SizedBox(height: spacing.space3),
 
-                                // Source Text
-                                Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Container(
-                                      width: 48,
-                                      alignment: Alignment.centerLeft,
-                                      child: Text(
-                                        '[${widget.sourceLang}]',
-                                        style: typography.codeSm.copyWith(
-                                          color: colors.textMuted,
-                                        ),
-                                      ),
-                                    ),
-                                    SizedBox(width: spacing.space3),
-                                    Expanded(
-                                      child: Text(
-                                        entry.sourceText,
-                                        style: typography.body.copyWith(
-                                          color: colors.textPrimary,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-
-                                SizedBox(height: spacing.space2),
-
-                                // Target Translation (Editable)
-                                Row(
-                                  crossAxisAlignment: CrossAxisAlignment.center,
-                                  children: [
-                                    Container(
-                                      width: 48,
-                                      alignment: Alignment.centerLeft,
-                                      child: Text(
-                                        '[${widget.targetLang}]',
-                                        style: typography.codeSm.copyWith(
-                                          color: colors.accent,
-                                        ),
-                                      ),
-                                    ),
-                                    SizedBox(width: spacing.space3),
-                                    Expanded(
-                                      child: TextFormField(
-                                        initialValue: targetText,
-                                        key: Key(entry.id),
-                                        style: typography.body.copyWith(
-                                          color: colors.textPrimary,
-                                        ),
-                                        decoration: InputDecoration(
-                                          isDense: true,
-                                          contentPadding:
-                                              const EdgeInsets.symmetric(
-                                                horizontal: 8,
-                                                vertical: 6,
-                                              ),
-                                          hintText: '번역문을 입력하세요...',
-                                          hintStyle: typography.body.copyWith(
+                                  // Source Text
+                                  Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Container(
+                                        width: context.d.langLabel,
+                                        alignment: Alignment.centerLeft,
+                                        child: Text(
+                                          '[${widget.sourceLang}]',
+                                          style: typography.codeSm.copyWith(
                                             color: colors.textMuted,
                                           ),
-                                          enabledBorder: OutlineInputBorder(
-                                            borderRadius: radii.xs,
-                                            borderSide: BorderSide(
-                                              color: colors.borderControl,
-                                              width: 1,
-                                            ),
-                                          ),
-                                          focusedBorder: OutlineInputBorder(
-                                            borderRadius: radii.xs,
-                                            borderSide: BorderSide(
-                                              color: colors.accent,
-                                              width: 1.5,
-                                            ),
+                                        ),
+                                      ),
+                                      SizedBox(width: spacing.space3),
+                                      Expanded(
+                                        child: Text(
+                                          entry.sourceText,
+                                          style: typography.body.copyWith(
+                                            color: colors.textPrimary,
                                           ),
                                         ),
-                                        onFieldSubmitted: (val) {
-                                          widget.onUpdateUserTranslation?.call(
-                                            entry.id,
-                                            val,
-                                          );
-                                        },
                                       ),
+                                    ],
+                                  ),
+
+                                  SizedBox(height: spacing.space2),
+
+                                  // Target Translation (Editable)
+                                  Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.center,
+                                    children: [
+                                      Container(
+                                        width: context.d.langLabel,
+                                        alignment: Alignment.centerLeft,
+                                        child: Text(
+                                          '[${widget.targetLang}]',
+                                          style: typography.codeSm.copyWith(
+                                            color: colors.accent,
+                                          ),
+                                        ),
+                                      ),
+                                      SizedBox(width: spacing.space3),
+                                      Expanded(
+                                        child: TextFormField(
+                                          initialValue: targetText,
+                                          key: Key(entry.id),
+                                          style: typography.body.copyWith(
+                                            color: colors.textPrimary,
+                                          ),
+                                          decoration: InputDecoration(
+                                            isDense: true,
+                                            contentPadding:
+                                                EdgeInsets.symmetric(
+                                                  horizontal: spacing.space8,
+                                                  vertical: spacing.space3,
+                                                ),
+                                            hintText: '번역문을 입력하세요...',
+                                            hintStyle: typography.body.copyWith(
+                                              color: colors.textMuted,
+                                            ),
+                                            enabledBorder: OutlineInputBorder(
+                                              borderRadius: radii.xs,
+                                              borderSide: BorderSide(
+                                                color: colors.borderControl,
+                                                width: context.d.borderThin,
+                                              ),
+                                            ),
+                                            focusedBorder: OutlineInputBorder(
+                                              borderRadius: radii.xs,
+                                              borderSide: BorderSide(
+                                                color: colors.accent,
+                                                width: context.d.borderThick,
+                                              ),
+                                            ),
+                                          ),
+                                          enabled: !widget.isTranslating,
+                                          onChanged: (val) =>
+                                              _queueEdit(entry.id, val),
+                                          onFieldSubmitted: (val) =>
+                                              _submitEdit(entry.id, val),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+
+                                  // Token Chips
+                                  if (multisetResult.tokenChips.isNotEmpty) ...[
+                                    SizedBox(height: spacing.space4),
+                                    Wrap(
+                                      spacing: spacing.space3,
+                                      runSpacing: spacing.space2,
+                                      children: multisetResult.tokenChips.map((
+                                        chip,
+                                      ) {
+                                        return Container(
+                                          padding: EdgeInsets.symmetric(
+                                            horizontal: spacing.space3,
+                                            vertical: spacing.space1,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: chip.isMatch
+                                                ? colors.bgRaised
+                                                : colors.dangerSurface,
+                                            borderRadius: radii.xs,
+                                            border: Border.all(
+                                              color: chip.isMatch
+                                                  ? colors.borderControl
+                                                  : colors.dangerBorder,
+                                              width: context.d.borderThin,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            '${chip.token} (s:${chip.sourceCount}/t:${chip.targetCount})',
+                                            style: typography.codeSm.copyWith(
+                                              color: chip.isMatch
+                                                  ? colors.textSecondary
+                                                  : colors.dangerText,
+                                            ),
+                                          ),
+                                        );
+                                      }).toList(),
                                     ),
                                   ],
-                                ),
+                                ],
+                              ),
+                            ),
 
-                                // Token Chips
-                                if (multisetResult.tokenChips.isNotEmpty) ...[
+                            SizedBox(width: spacing.space8),
+
+                            // Status, Validation Badges & Action Buttons
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                LfStatusChip(type: statusType),
+                                if (targetText.isNotEmpty) ...[
+                                  SizedBox(height: spacing.space3),
+                                  Container(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: spacing.space3,
+                                      vertical: spacing.space1,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: multisetResult.isMatch
+                                          ? colors.successSurface
+                                          : colors.dangerSurface,
+                                      borderRadius: radii.xs,
+                                    ),
+                                    child: Text(
+                                      multisetResult.isMatch
+                                          ? '멀티셋 일치'
+                                          : '멀티셋 불일치',
+                                      style: typography.caption.copyWith(
+                                        color: multisetResult.isMatch
+                                            ? colors.successText
+                                            : colors.dangerText,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                                if (entry.status == 'invalid') ...[
                                   SizedBox(height: spacing.space4),
-                                  Wrap(
-                                    spacing: spacing.space3,
-                                    runSpacing: spacing.space2,
-                                    children: multisetResult.tokenChips.map((
-                                      chip,
-                                    ) {
-                                      return Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 6,
-                                          vertical: 2,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: chip.isMatch
-                                              ? colors.bgRaised
-                                              : colors.dangerSurface,
-                                          borderRadius: radii.xs,
-                                          border: Border.all(
-                                            color: chip.isMatch
-                                                ? colors.borderControl
-                                                : colors.dangerBorder,
-                                            width: 1,
-                                          ),
-                                        ),
-                                        child: Text(
-                                          '${chip.token} (s:${chip.sourceCount}/t:${chip.targetCount})',
-                                          style: typography.codeSm.copyWith(
-                                            color: chip.isMatch
-                                                ? colors.textSecondary
-                                                : colors.dangerText,
-                                          ),
-                                        ),
-                                      );
-                                    }).toList(),
+                                  Row(
+                                    children: [
+                                      LfButton(
+                                        onPressed: widget.isTranslating
+                                            ? null
+                                            : () => widget.onResetEntryToWait
+                                                  ?.call(entry.id),
+                                        label: '다시 시도',
+                                        tooltip: widget.isTranslating
+                                            ? '번역이 진행 중입니다'
+                                            : null,
+                                        style: LfButtonStyle.secondary,
+                                      ),
+                                      SizedBox(width: spacing.space2),
+                                      LfButton(
+                                        onPressed: widget.isTranslating
+                                            ? null
+                                            : () => widget.onKeepSourceText
+                                                  ?.call(entry.id),
+                                        label: '원문 유지',
+                                        tooltip: widget.isTranslating
+                                            ? '번역이 진행 중입니다'
+                                            : null,
+                                        style: LfButtonStyle.secondary,
+                                      ),
+                                    ],
                                   ),
                                 ],
                               ],
                             ),
-                          ),
-
-                          SizedBox(width: spacing.space8),
-
-                          // Status, Validation Badges & Action Buttons
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              LfStatusChip(type: statusType),
-                              if (targetText.isNotEmpty) ...[
-                                SizedBox(height: spacing.space3),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 2,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: multisetResult.isMatch
-                                        ? colors.successSurface
-                                        : colors.dangerSurface,
-                                    borderRadius: radii.xs,
-                                  ),
-                                  child: Text(
-                                    multisetResult.isMatch
-                                        ? '멀티셋 일치'
-                                        : '멀티셋 불일치',
-                                    style: typography.caption.copyWith(
-                                      color: multisetResult.isMatch
-                                          ? colors.successText
-                                          : colors.dangerText,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                              if (entry.status == 'invalid') ...[
-                                SizedBox(height: spacing.space4),
-                                Row(
-                                  children: [
-                                    LfButton(
-                                      onPressed: () => widget.onResetEntryToWait
-                                          ?.call(entry.id),
-                                      label: '다시 시도',
-                                      style: LfButtonStyle.secondary,
-                                    ),
-                                    SizedBox(width: spacing.space2),
-                                    LfButton(
-                                      onPressed: () => widget.onKeepSourceText
-                                          ?.call(entry.id),
-                                      label: '원문 유지',
-                                      style: LfButtonStyle.secondary,
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ],
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-        ),
-      ],
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -385,6 +443,12 @@ class _EntriesListViewState extends State<EntriesListView> {
   int _countFor(String filterKey) {
     if (filterKey == 'all') {
       return widget.statusCounts.values.fold(0, (sum, n) => sum + n);
+    }
+    if (filterKey == problemStatusFilter) {
+      return problemStatuses.fold(
+        0,
+        (sum, status) => sum + (widget.statusCounts[status] ?? 0),
+      );
     }
     return widget.statusCounts[filterKey] ?? 0;
   }
@@ -399,12 +463,12 @@ class _EntriesListViewState extends State<EntriesListView> {
       ),
       child: Container(
         alignment: Alignment.center,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
+        padding: EdgeInsets.symmetric(horizontal: context.s.space8),
         decoration: BoxDecoration(
           border: Border(
             bottom: BorderSide(
               color: isSelected ? colors.accent : Colors.transparent,
-              width: 2,
+              width: context.d.borderThick,
             ),
           ),
         ),

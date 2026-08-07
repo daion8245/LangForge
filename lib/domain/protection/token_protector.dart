@@ -51,7 +51,7 @@ abstract final class TokenProtector {
     }
 
     // Check if any leftover placeholders remain
-    if (RegExp(r'\u{2063}LF\d+\u{2063}').hasMatch(result)) {
+    if (RegExp('\u2063LF\\d+\u2063').hasMatch(result)) {
       return null;
     }
 

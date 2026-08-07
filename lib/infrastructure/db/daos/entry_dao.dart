@@ -15,6 +15,7 @@ class EntryQuery {
   const EntryQuery({
     this.namespaceId,
     this.status,
+    this.statuses,
     this.searchText,
     this.offset = 0,
     this.limit = entryPageSize,
@@ -25,6 +26,18 @@ class EntryQuery {
   /// `EntryStatus.wireName`, or null for every status.
   final String? status;
 
+  /// Several statuses at once, for filters like `문제` that span more than one
+  /// (AC-7.7). Takes precedence over [status] when both are set.
+  final List<String>? statuses;
+
+  /// The statuses this query accepts, or null when it accepts all of them.
+  List<String>? get statusFilterValues {
+    final many = statuses;
+    if (many != null && many.isNotEmpty) return many;
+    final one = status;
+    return one == null ? null : [one];
+  }
+
   /// Matched against key and source text with LIKE (TECHNICAL.md 3.3).
   final String? searchText;
 
@@ -34,6 +47,7 @@ class EntryQuery {
   EntryQuery copyWith({
     String? namespaceId,
     String? status,
+    List<String>? statuses,
     String? searchText,
     int? offset,
     int? limit,
@@ -43,6 +57,7 @@ class EntryQuery {
     return EntryQuery(
       namespaceId: namespaceId ?? this.namespaceId,
       status: clearStatus ? null : (status ?? this.status),
+      statuses: clearStatus ? null : (statuses ?? this.statuses),
       searchText: clearSearch ? null : (searchText ?? this.searchText),
       offset: offset ?? this.offset,
       limit: limit ?? this.limit,
@@ -62,9 +77,9 @@ class EntryDao extends DatabaseAccessor<AppDatabase> with _$EntryDaoMixin {
       select.where((tbl) => tbl.namespaceId.equals(namespaceId));
     }
 
-    final status = query.status;
-    if (status != null) {
-      select.where((tbl) => tbl.status.equals(status));
+    final statusValues = query.statusFilterValues;
+    if (statusValues != null) {
+      select.where((tbl) => tbl.status.isIn(statusValues));
     }
 
     final search = query.searchText?.trim();
@@ -105,9 +120,9 @@ class EntryDao extends DatabaseAccessor<AppDatabase> with _$EntryDaoMixin {
     if (namespaceId != null) {
       statement.where(entries.namespaceId.equals(namespaceId));
     }
-    final status = query.status;
-    if (status != null) {
-      statement.where(entries.status.equals(status));
+    final statusValues = query.statusFilterValues;
+    if (statusValues != null) {
+      statement.where(entries.status.isIn(statusValues));
     }
     final search = query.searchText?.trim();
     if (search != null && search.isNotEmpty) {

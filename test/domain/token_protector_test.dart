@@ -43,6 +43,17 @@ void main() {
       expect(restored, isNull);
     });
 
+    test('Detects extra or leftover placeholders and returns null', () {
+      const text = 'Hello %s!';
+      final protected = TokenProtector.protect(text);
+
+      // Engine restored LF0, but also introduced an invented LF99 placeholder
+      const extraPlaceholderText = '안녕하세요 %s! \u{2063}LF99\u{2063}';
+      final restored = TokenProtector.restore(protected, extraPlaceholderText);
+
+      expect(restored, isNull);
+    });
+
     test(
       'Roundtrip protection and restoration preserves exact string when unchanged',
       () {
