@@ -1,10 +1,9 @@
 import 'dart:async';
-import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
 import '../../domain/provider/translation_provider.dart';
+import '../platform/memory_budget.dart';
 import 'messages.dart';
 import 'scan_worker.dart';
 
@@ -17,9 +16,11 @@ typedef ProgressCallback =
 /// minutes (ROADMAP Phase 1 위험), and none of it may happen on the UI thread
 /// (AGENTS.md 2.3).
 abstract final class WorkerPool {
-  /// Concurrent scans. Capped at 4: the work is IO-bound on the archive, and
-  /// more isolates mostly buys memory pressure.
-  static int get poolSize => math.min(Platform.numberOfProcessors, 4);
+  /// Concurrent scans. Capped at 4 on desktop: the work is IO-bound on the
+  /// archive, and more isolates mostly buys memory pressure. A phone gets 2 —
+  /// each isolate holds an archive buffer, which makes this the single biggest
+  /// multiplier on peak memory during a scan (MOBILE.md 1.2).
+  static int get poolSize => MemoryBudget.scanConcurrency;
 
   /// Progress is reported no more often than this (AGENTS.md 4.5).
   static const Duration progressInterval = Duration(milliseconds: 100);

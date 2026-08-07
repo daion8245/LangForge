@@ -16,18 +16,21 @@
    - `%s`, `%1$s`, `§a`, `§x§F§F...`, `{name}`, `{{name}}` 등의 포맷 코드를 U+2063 보이지 않는 단위 표식으로 치환하여 번역 API 전송.
    - `MultisetValidator` 기반 후검증으로 변수 변형/누락 시 100% 차단 및 재시도.
 
-3. **Gemini AI 번역 엔진 연동 (`v1beta` REST API)**
-   - Google Gemini REST API 기반 자동 번역 연동.
-   - `x-goog-api-key` HTTP 헤더 전송 (URL 쿼리 전달 불가 규격 준수).
+3. **번역 엔진 4종 (Gemini · DeepL · Google · Papago)**
+   - 엔진마다 인증 필드가 다르게 렌더링되고, `연결 테스트` 로 키를 실제 호출해 검증.
+   - API 키는 항상 HTTP 헤더로 전송 (URL 쿼리 전달 없음).
    - 지수 백오프 + 지터(Jitter) 재시도 및 401/429 오류 응답 분리 처리.
    - `FlutterSecureStorage` (Windows Credential Manager) 기반 자격 증명 보안 암호화 저장.
+   - 엔드포인트·모델 목록은 소스가 아닌 `assets/data/providers.json` 에 있음.
 
 4. **대조 편집기 & 6단계 병합 우선순위 (`MergePolicy`)**
    - 사용자가 직접 수정한 번역(`userTranslation`)은 어떤 자동 번역 실행 시에도 절대 덮어쓰지 않음.
    - S2-B1 대조 편집기 뷰에서 인라인 셀 직접 편집 및 즉시 상태 반영.
 
 5. **Minecraft 리소스팩 내보내기 (`ResourcePackExporter`)**
-   - 통합 ZIP 리소스팩(`KO_Translation_Pack.zip`), 폴더형 리소스팩, 경로 보존 JSON, namespace별 개별 JSON 지원.
+   - 통합 ZIP 리소스팩(`KO_Translation_Pack.zip`), 폴더형 리소스팩, 경로 보존 JSON, namespace별 개별 JSON, 모드별 개별 리소스팩 지원.
+   - `pack.png` 를 기본 아이콘 · 사용자 이미지 · 원본 모드 아이콘 · 없음 중에서 선택.
+   - `Translation_Report.md` 에 통계 · 오류 · 경고 · 충돌 · 원문 유지 항목 · 출력 파일 목록 기록.
    - Minecraft 1.18.2 ~ 1.21.4 (12개 버전) `pack_format` 자동 매핑.
    - ZIP 최상단 `pack.mcmeta` 포맷 및 `/` 경로 구분자 엄격 검증 (`ZipVerifier`).
    - 원자적 쓰기(Atomic Write) 적용으로 실패 시 롤백 및 `.bak` 백업 보장.
@@ -35,6 +38,16 @@
 6. **프로젝트 저장 & 시작 화면 S0 (`.lfproj`)**
    - 단일 SQLite `.lfproj` 데이터베이스로 전체 작업 상태 저장 및 복원.
    - 최근 프로젝트 10개 목록 관리 (`registry.db`) 및 비정상 종료 시 자동 크래시 복원.
+
+7. **캐시 · 용어집 · 충돌 해결**
+   - 같은 원문·같은 조건이면 API 를 호출하지 않는 번역 캐시. 적중률 표시 (항목 0개면 `—`).
+   - 전역 · 프로젝트 용어집을 번역기 호출 **전에** 적용.
+   - 같은 namespace 의 같은 key 에 원문이 다르면 충돌로 감지하고, 원문을 나란히 비교해 사용자가 최종 값을 선택. 미해결 충돌이 있으면 출력이 차단됨.
+
+8. **환경설정 4개 탭 · 대상 언어 6종**
+   - 일반 · 변수 보호 · 충돌 처리 · 언어 프로필 탭.
+   - 대상 언어를 6종 중에서 선택하면 출력 파일명과 `pack.mcmeta` 설명이 함께 바뀜.
+   - 앱 내 로그 뷰어 제공.
 
 ---
 
@@ -107,10 +120,18 @@ flutter build windows --release
 
 ### API 키 발급
 
-번역에는 본인의 Google Gemini API 키가 필요합니다 (BYOK). 앱이 키를 대신 제공하지 않습니다.
+번역에는 본인의 API 키가 필요합니다 (BYOK). 앱이 키를 대신 제공하지 않습니다.
+엔진 4종 중 하나만 있으면 됩니다.
 
-1. <https://aistudio.google.com/app/apikey> 에서 API 키를 발급합니다.
-2. 앱 우측 **작업 및 엔진 설정** 패널의 `Gemini API Key` 란에 붙여 넣습니다.
+| 엔진 | 키 발급 |
+|---|---|
+| Google Gemini | <https://aistudio.google.com/app/apikey> |
+| DeepL | <https://www.deepl.com/your-account/keys> |
+| Google Cloud Translation | <https://console.cloud.google.com/apis/credentials> |
+| Papago | <https://console.ncloud.com/naver-service/application> (Client ID · Client Secret 2개) |
+
+1. 위 표에서 쓸 엔진의 키를 발급합니다.
+2. 앱 우측 **작업 및 엔진 설정** 패널에서 엔진을 고르고 인증 필드에 붙여 넣습니다.
 3. `연결 테스트` 로 키가 유효한지 확인합니다.
 
 키는 Windows 자격 증명 관리자에 저장되며 프로젝트 파일·로그·보고서 어디에도 기록되지

@@ -29,7 +29,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase(super.e);
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration {
@@ -49,6 +49,10 @@ class AppDatabase extends _$AppDatabase {
             'CREATE INDEX IF NOT EXISTS idx_glossary_ns '
             'ON glossary_terms(namespace);',
           );
+        }
+        if (from < 3) {
+          await m.addColumn(projectMeta, projectMeta.conflictPriority);
+          await m.addColumn(conflicts, conflicts.suggestedEntryId);
         }
       },
     );

@@ -5,15 +5,20 @@ import 'dart:io';
 import 'package:flutter/foundation.dart' show FlutterError;
 import 'package:flutter/services.dart' show rootBundle;
 
+import '../../domain/validation/pack_icon_validator.dart';
+
 /// Where a resource pack's `pack.png` comes from.
 ///
-/// Mirrors `ProjectMeta.packIconMode` (TECHNICAL.md 3.2).
+/// Mirrors `ProjectMeta.packIconMode` (TECHNICAL.md 3.2 · 8.4b).
 enum PackIconMode {
   /// The icon bundled with LangForge.
   bundled('default'),
 
   /// A PNG the user picked.
   custom('custom'),
+
+  /// Icon extracted from an input JAR (ROADMAP 11.5).
+  mod('mod'),
 
   /// Ship no `pack.png` at all. Minecraft accepts a pack without one.
   none('none');
@@ -39,9 +44,12 @@ abstract final class PackIconLoader {
   /// A missing or unreadable custom file falls back to the bundled icon rather
   /// than failing the export — the icon is cosmetic, and losing a whole run
   /// over it would be the wrong trade.
+  ///
+  /// [modIconBytes] is supplied by [ModIconExtractor] when [mode] is [PackIconMode.mod].
   static Future<List<int>?> load({
     PackIconMode mode = PackIconMode.bundled,
     String? customPath,
+    List<int>? modIconBytes,
   }) async {
     switch (mode) {
       case PackIconMode.none:
@@ -49,7 +57,17 @@ abstract final class PackIconLoader {
 
       case PackIconMode.custom:
         final bytes = await _readCustom(customPath);
-        return bytes ?? await _readBundled();
+        if (bytes != null && PackIconValidator.validate(bytes).isValid) {
+          return bytes;
+        }
+        return _readBundled();
+
+      case PackIconMode.mod:
+        if (modIconBytes != null &&
+            PackIconValidator.validate(modIconBytes).isValid) {
+          return modIconBytes;
+        }
+        return _readBundled();
 
       case PackIconMode.bundled:
         return _readBundled();

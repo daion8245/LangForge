@@ -23,6 +23,9 @@ class LfSizes extends ThemeExtension<LfSizes> {
     required this.buttonTertiary,
     required this.buttonDanger,
     required this.checkbox,
+    required this.toggleTrackW,
+    required this.toggleTrackH,
+    required this.toggleKnob,
     required this.statusDot,
     required this.iconSm,
     required this.iconMd,
@@ -68,6 +71,9 @@ class LfSizes extends ThemeExtension<LfSizes> {
   final double buttonDanger;
 
   final double checkbox;
+  final double toggleTrackW;
+  final double toggleTrackH;
+  final double toggleKnob;
   final double statusDot;
 
   /// Icon sizes — DESIGN.md 7.
@@ -120,6 +126,9 @@ class LfSizes extends ThemeExtension<LfSizes> {
     buttonTertiary: 25,
     buttonDanger: 32,
     checkbox: 15,
+    toggleTrackW: 36,
+    toggleTrackH: 20,
+    toggleKnob: 16,
     statusDot: 6,
     iconSm: 14,
     iconMd: 16,
@@ -161,6 +170,9 @@ class LfSizes extends ThemeExtension<LfSizes> {
     double? buttonTertiary,
     double? buttonDanger,
     double? checkbox,
+    double? toggleTrackW,
+    double? toggleTrackH,
+    double? toggleKnob,
     double? statusDot,
     double? iconSm,
     double? iconMd,
@@ -200,6 +212,9 @@ class LfSizes extends ThemeExtension<LfSizes> {
       buttonTertiary: buttonTertiary ?? this.buttonTertiary,
       buttonDanger: buttonDanger ?? this.buttonDanger,
       checkbox: checkbox ?? this.checkbox,
+      toggleTrackW: toggleTrackW ?? this.toggleTrackW,
+      toggleTrackH: toggleTrackH ?? this.toggleTrackH,
+      toggleKnob: toggleKnob ?? this.toggleKnob,
       statusDot: statusDot ?? this.statusDot,
       iconSm: iconSm ?? this.iconSm,
       iconMd: iconMd ?? this.iconMd,
@@ -245,6 +260,9 @@ class LfSizes extends ThemeExtension<LfSizes> {
       buttonTertiary: at(buttonTertiary, other.buttonTertiary),
       buttonDanger: at(buttonDanger, other.buttonDanger),
       checkbox: at(checkbox, other.checkbox),
+      toggleTrackW: at(toggleTrackW, other.toggleTrackW),
+      toggleTrackH: at(toggleTrackH, other.toggleTrackH),
+      toggleKnob: at(toggleKnob, other.toggleKnob),
       statusDot: at(statusDot, other.statusDot),
       iconSm: at(iconSm, other.iconSm),
       iconMd: at(iconMd, other.iconMd),

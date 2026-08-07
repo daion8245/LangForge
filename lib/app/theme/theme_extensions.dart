@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'lf_colors.dart';
+import 'lf_mobile_sizes.dart';
 import 'lf_radii.dart';
 import 'lf_sizes.dart';
 import 'lf_spacing.dart';
@@ -15,6 +16,10 @@ extension LfThemeContextExtension on BuildContext {
 
   /// Fixed dimensions and breakpoints — DESIGN.md 5.5.
   LfSizes get d => Theme.of(this).extension<LfSizes>() ?? LfSizes.standard;
+
+  /// Mobile-only dimensions — DESIGN.md 6.3 · MOBILE.md 2.
+  LfMobileSizes get m =>
+      Theme.of(this).extension<LfMobileSizes>() ?? LfMobileSizes.standard;
 
   /// True when the OS asks for reduced motion (TECHNICAL.md 15).
   ///

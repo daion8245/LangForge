@@ -2,20 +2,27 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../app/theme/theme_extensions.dart';
+import '../../domain/model/entry_status.dart';
+import '../../domain/model/translation_entry.dart';
 import '../../domain/policy/export_gate.dart';
 import '../../infrastructure/export/pack_meta_builder.dart';
 
-import '../../domain/model/entry_status.dart';
-import '../../domain/model/translation_entry.dart';
-
 enum ExportFormatOption {
-  zipPack('통합 ZIP 리소스팩 (KO_Translation_Pack.zip)'),
-  folderPack('폴더형 리소스팩 (LangForge_Translation_Pack/)'),
-  pathJson('전체 경로 보존 JSON (assets/{ns}/lang/ko_kr.json)'),
-  namespaceJson('namespace별 개별 JSON ({ns}/ko_kr.json)');
+  zipPack,
+  folderPack,
+  pathJson,
+  namespaceJson,
+  perModPacks;
 
-  final String label;
-  const ExportFormatOption(this.label);
+  String labelFor(String outputFileName) => switch (this) {
+    ExportFormatOption.zipPack => '통합 ZIP 리소스팩',
+    ExportFormatOption.folderPack => '폴더형 리소스팩',
+    ExportFormatOption.pathJson =>
+      '전체 경로 보존 JSON (assets/{ns}/lang/$outputFileName)',
+    ExportFormatOption.namespaceJson =>
+      'namespace별 개별 JSON ({ns}/$outputFileName)',
+    ExportFormatOption.perModPacks => '모드별 개별 리소스팩 ZIP',
+  };
 }
 
 class ExportModalView extends StatefulWidget {
@@ -25,6 +32,10 @@ class ExportModalView extends StatefulWidget {
     required this.entries,
     required this.isTranslating,
     this.hasUnresolvedConflict = false,
+    this.allowSkipChecks = false,
+    this.outputFileName = 'ko_kr.json',
+    this.targetLangCode = 'ko_kr',
+    this.onOpenConflicts,
     required this.mcVersionsJsonStr,
     required this.onExportConfirmed,
   });
@@ -33,10 +44,15 @@ class ExportModalView extends StatefulWidget {
   final List<TranslationEntry> entries;
   final bool isTranslating;
 
-  /// Unresolved conflicts block export outright (AC-9.2). Resolving them is a
-  /// 1.0 screen (AC-8.6); until then the only way past is to exclude one of the
-  /// namespaces involved.
+  /// Unresolved conflicts block export outright (AC-9.2).
   final bool hasUnresolvedConflict;
+
+  /// When false, the policy override checkboxes stay off and disabled (E3).
+  final bool allowSkipChecks;
+
+  final String outputFileName;
+  final String targetLangCode;
+  final VoidCallback? onOpenConflicts;
 
   final String mcVersionsJsonStr;
   final void Function(
@@ -79,12 +95,14 @@ class _ExportModalViewState extends State<ExportModalView> {
     final spacing = context.s;
     final typography = context.t;
 
+    final allowPending = widget.allowSkipChecks ? _allowPendingEntries : true;
+    final allowFailed = widget.allowSkipChecks ? _allowValidationFailed : false;
+
     final policyOptions = ExportPolicyOptions(
-      allowPendingEntries: _allowPendingEntries,
-      allowValidationFailed: _allowValidationFailed,
+      allowPendingEntries: allowPending,
+      allowValidationFailed: allowFailed,
     );
 
-    // Cast entries & namespaces for ExportGate evaluation
     final verdict = ExportGate.evaluate(
       namespaces: widget.namespaces,
       entries: widget.entries,
@@ -92,12 +110,19 @@ class _ExportModalViewState extends State<ExportModalView> {
       hasUnresolvedConflict: widget.hasUnresolvedConflict,
       options: policyOptions,
     );
-
     final isAllowed = verdict is Allowed;
+
     final packFormat = PackMetaBuilder.getPackFormat(
       widget.mcVersionsJsonStr,
       _selectedMcVersion,
     );
+
+    final waitCount = widget.entries
+        .where((e) => e.status == EntryStatus.wait)
+        .length;
+    final invalidCount = widget.entries
+        .where((e) => e.status == EntryStatus.invalid)
+        .length;
 
     return Dialog(
       backgroundColor: Colors.transparent,
@@ -114,9 +139,7 @@ class _ExportModalViewState extends State<ExportModalView> {
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Modal Header
             Container(
               height: context.d.modalHeader,
               padding: EdgeInsets.symmetric(horizontal: spacing.space8),
@@ -130,194 +153,127 @@ class _ExportModalViewState extends State<ExportModalView> {
               ),
               child: Row(
                 children: [
-                  Text(
-                    '리소스팩 및 번역 내보내기',
-                    style: typography.body.copyWith(
-                      color: colors.textPrimary,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                  Icon(LucideIcons.package, size: context.d.iconMd),
+                  SizedBox(width: spacing.space4),
+                  Text('출력 전 검사', style: typography.title),
                   const Spacer(),
                   IconButton(
-                    icon: Icon(
-                      LucideIcons.x,
-                      size: context.d.iconLg,
-                      color: colors.textMuted,
-                    ),
+                    tooltip: '닫기',
                     onPressed: () => Navigator.of(context).pop(),
+                    icon: Icon(LucideIcons.x, size: context.d.iconMd),
                   ),
                 ],
               ),
             ),
-
-            // Modal Body
             Flexible(
               child: SingleChildScrollView(
                 padding: EdgeInsets.all(spacing.space8),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Summary Section
-                    Text(
-                      '내보내기 집계 요약',
-                      style: typography.overline.copyWith(
-                        color: colors.textFaint,
-                      ),
-                    ),
-                    SizedBox(height: spacing.space3),
-                    Container(
-                      padding: EdgeInsets.all(spacing.space6),
-                      decoration: BoxDecoration(
-                        color: colors.bgRaised,
-                        borderRadius: radii.r2xl,
-                        border: Border.all(
-                          color: colors.borderControl,
-                          width: context.d.borderThin,
+                    Row(
+                      children: [
+                        _buildStatColumn('대기', '$waitCount', colors.textMuted),
+                        _buildStatColumn(
+                          '검증 실패',
+                          '$invalidCount',
+                          colors.dangerText,
                         ),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceAround,
-                        children: [
-                          _buildStatColumn(
-                            '전체 키',
-                            widget.entries.length.toString(),
-                            colors.textPrimary,
-                          ),
-                          _buildStatColumn(
-                            '대기',
-                            widget.entries
-                                .where((e) => e.status == EntryStatus.wait)
-                                .length
-                                .toString(),
-                            colors.textMuted,
-                          ),
-                          _buildStatColumn(
-                            '완료',
-                            widget.entries
-                                .where((e) => e.status == EntryStatus.done)
-                                .length
-                                .toString(),
-                            colors.statusDoneFg,
-                          ),
-                          _buildStatColumn(
-                            '유지',
-                            widget.entries
-                                .where((e) => e.status == EntryStatus.kept)
-                                .length
-                                .toString(),
-                            colors.accent,
-                          ),
-                        ],
-                      ),
+                        _buildStatColumn(
+                          '대상 언어',
+                          widget.targetLangCode,
+                          colors.accent,
+                        ),
+                      ],
                     ),
-                    SizedBox(height: spacing.space8),
-
-                    // Target MC Version
+                    SizedBox(height: spacing.space6),
+                    Text('Minecraft 버전', style: typography.bodySm),
+                    SizedBox(height: spacing.space3),
+                    DropdownButton<String>(
+                      value: _selectedMcVersion,
+                      isExpanded: true,
+                      items: _mcVersions
+                          .map(
+                            (v) => DropdownMenuItem(value: v, child: Text(v)),
+                          )
+                          .toList(),
+                      onChanged: (v) {
+                        if (v != null) setState(() => _selectedMcVersion = v);
+                      },
+                    ),
                     Text(
-                      '타겟 Minecraft 버전',
+                      'pack_format: $packFormat',
                       style: typography.caption.copyWith(
-                        color: colors.textSecondary,
+                        color: colors.textMuted,
                       ),
                     ),
+                    SizedBox(height: spacing.space6),
+                    Text('출력 형식', style: typography.bodySm),
                     SizedBox(height: spacing.space3),
-                    Container(
-                      padding: EdgeInsets.symmetric(horizontal: spacing.space7),
-                      decoration: BoxDecoration(
-                        color: colors.bgRaised,
-                        borderRadius: radii.r2xl,
-                        border: Border.all(
-                          color: colors.borderControl,
-                          width: context.d.borderThin,
-                        ),
-                      ),
-                      child: DropdownButtonHideUnderline(
-                        child: DropdownButton<String>(
-                          value: _selectedMcVersion,
-                          isExpanded: true,
-                          dropdownColor: colors.bgRaised,
-                          items: _mcVersions.map((v) {
-                            final fmt = PackMetaBuilder.getPackFormat(
-                              widget.mcVersionsJsonStr,
-                              v,
-                            );
-                            return DropdownMenuItem(
-                              value: v,
-                              child: Text(
-                                'Minecraft $v (pack_format: $fmt)',
+                    RadioGroup<ExportFormatOption>(
+                      groupValue: _selectedFormat,
+                      onChanged: (val) {
+                        if (val != null) {
+                          setState(() => _selectedFormat = val);
+                        }
+                      },
+                      child: Column(
+                        children: [
+                          for (final opt in ExportFormatOption.values)
+                            RadioListTile<ExportFormatOption>(
+                              dense: true,
+                              value: opt,
+                              title: Text(
+                                opt.labelFor(widget.outputFileName),
                                 style: typography.bodySm.copyWith(
                                   color: colors.textPrimary,
                                 ),
                               ),
-                            );
-                          }).toList(),
-                          onChanged: (val) {
-                            if (val != null) {
-                              setState(() => _selectedMcVersion = val);
-                            }
-                          },
-                        ),
+                            ),
+                        ],
                       ),
                     ),
-                    SizedBox(height: spacing.space8),
-
-                    // Format Selection Radio Group
-                    Text(
-                      '내보내기 형식',
-                      style: typography.caption.copyWith(
-                        color: colors.textSecondary,
-                      ),
-                    ),
-                    SizedBox(height: spacing.space3),
-                    ...ExportFormatOption.values.map((opt) {
-                      // ignore: deprecated_member_use
-                      return RadioListTile<ExportFormatOption>(
-                        dense: true,
-                        value: opt,
-                        // ignore: deprecated_member_use
-                        groupValue: _selectedFormat,
-                        title: Text(
-                          opt.label,
-                          style: typography.bodySm.copyWith(
-                            color: colors.textPrimary,
-                          ),
-                        ),
-                        // ignore: deprecated_member_use
-                        onChanged: (val) {
-                          if (val != null) {
-                            setState(() => _selectedFormat = val);
-                          }
-                        },
-                      );
-                    }),
                     SizedBox(height: spacing.space6),
-
-                    // Policy Checkboxes
                     CheckboxListTile(
                       dense: true,
-                      value: _allowPendingEntries,
+                      value: allowPending,
                       title: Text(
                         '대기 항목 원문 유지 후 출력 허용',
                         style: typography.bodySm.copyWith(
                           color: colors.textPrimary,
                         ),
                       ),
-                      onChanged: (val) =>
-                          setState(() => _allowPendingEntries = val == true),
+                      onChanged: widget.allowSkipChecks
+                          ? (val) => setState(
+                              () => _allowPendingEntries = val == true,
+                            )
+                          : null,
                     ),
                     CheckboxListTile(
                       dense: true,
-                      value: _allowValidationFailed,
+                      value: allowFailed,
                       title: Text(
                         '검증 실패 항목 포함 출력 허용 (권장하지 않음)',
                         style: typography.bodySm.copyWith(
                           color: colors.dangerText,
                         ),
                       ),
-                      onChanged: (val) =>
-                          setState(() => _allowValidationFailed = val == true),
+                      onChanged: widget.allowSkipChecks
+                          ? (val) => setState(
+                              () => _allowValidationFailed = val == true,
+                            )
+                          : null,
                     ),
-
-                    // Blocked Reasons Alert
+                    if (!widget.allowSkipChecks)
+                      Padding(
+                        padding: EdgeInsets.only(top: spacing.space2),
+                        child: Text(
+                          '검사 우회는 환경설정에서 "출력 전 검사 건너뛰기 허용"을 켠 뒤에만 사용할 수 있습니다.',
+                          style: typography.caption.copyWith(
+                            color: colors.textMuted,
+                          ),
+                        ),
+                      ),
                     if (!isAllowed && verdict is Blocked) ...[
                       SizedBox(height: spacing.space6),
                       Container(
@@ -330,11 +286,24 @@ class _ExportModalViewState extends State<ExportModalView> {
                             width: context.d.borderThin,
                           ),
                         ),
-                        child: Text(
-                          '내보내기 차단 원인: ${verdict.reasons.map((r) => r.name).join(', ')}',
-                          style: typography.caption.copyWith(
-                            color: colors.dangerText,
-                          ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '내보내기 차단 원인: ${verdict.reasons.map((r) => r.name).join(', ')}',
+                              style: typography.caption.copyWith(
+                                color: colors.dangerText,
+                              ),
+                            ),
+                            if (widget.hasUnresolvedConflict &&
+                                widget.onOpenConflicts != null) ...[
+                              SizedBox(height: spacing.space4),
+                              TextButton(
+                                onPressed: widget.onOpenConflicts,
+                                child: const Text('충돌 해결 열기'),
+                              ),
+                            ],
+                          ],
                         ),
                       ),
                     ],
@@ -342,8 +311,6 @@ class _ExportModalViewState extends State<ExportModalView> {
                 ),
               ),
             ),
-
-            // Modal Footer
             Container(
               height: context.d.modalFooter,
               padding: EdgeInsets.symmetric(horizontal: spacing.space8),
@@ -387,15 +354,17 @@ class _ExportModalViewState extends State<ExportModalView> {
   }
 
   Widget _buildStatColumn(String label, String value, Color color) {
-    return Column(
-      children: [
-        Text(value, style: context.t.title.copyWith(color: color)),
-        SizedBox(height: context.s.space1),
-        Text(
-          label,
-          style: context.t.caption.copyWith(color: context.c.textMuted),
-        ),
-      ],
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: context.t.caption.copyWith(color: context.c.textMuted),
+          ),
+          Text(value, style: context.t.body.copyWith(color: color)),
+        ],
+      ),
     );
   }
 }

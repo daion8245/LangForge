@@ -42,6 +42,10 @@ class NextNamespaceIntent extends Intent {
   const NextNamespaceIntent();
 }
 
+class OpenSettingsIntent extends Intent {
+  const OpenSettingsIntent();
+}
+
 /// Wraps the editor in the application-wide shortcut map.
 class LangForgeShortcuts extends StatelessWidget {
   const LangForgeShortcuts({
@@ -56,6 +60,7 @@ class LangForgeShortcuts extends StatelessWidget {
     required this.onFocusSearch,
     required this.onEscape,
     required this.onNextNamespace,
+    required this.onOpenSettings,
   });
 
   final Widget child;
@@ -68,6 +73,7 @@ class LangForgeShortcuts extends StatelessWidget {
   final VoidCallback onFocusSearch;
   final VoidCallback onEscape;
   final VoidCallback onNextNamespace;
+  final VoidCallback onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -86,6 +92,8 @@ class LangForgeShortcuts extends StatelessWidget {
         SingleActivator(LogicalKeyboardKey.keyE, control: true): ExportIntent(),
         SingleActivator(LogicalKeyboardKey.keyF, control: true):
             FocusSearchIntent(),
+        SingleActivator(LogicalKeyboardKey.comma, control: true):
+            OpenSettingsIntent(),
         SingleActivator(LogicalKeyboardKey.escape): DismissIntent(),
         SingleActivator(LogicalKeyboardKey.tab, control: true):
             NextNamespaceIntent(),
@@ -131,6 +139,12 @@ class LangForgeShortcuts extends StatelessWidget {
           NextNamespaceIntent: CallbackAction<NextNamespaceIntent>(
             onInvoke: (_) {
               onNextNamespace();
+              return null;
+            },
+          ),
+          OpenSettingsIntent: CallbackAction<OpenSettingsIntent>(
+            onInvoke: (_) {
+              onOpenSettings();
               return null;
             },
           ),

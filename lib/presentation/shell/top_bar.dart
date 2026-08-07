@@ -13,6 +13,8 @@ enum _FileMenuAction {
   addFiles,
   addFolder,
   rescan,
+  openSettings,
+  openConflicts,
   closeProject,
 }
 
@@ -32,6 +34,8 @@ class TopBar extends StatelessWidget {
     this.onSaveProjectAs,
     this.onCloseProject,
     this.onRenameProject,
+    this.onOpenSettings,
+    this.onOpenConflicts,
     this.onSearchChanged,
     this.searchFocusNode,
     this.onToggleRightPanel,
@@ -58,6 +62,8 @@ class TopBar extends StatelessWidget {
   final VoidCallback? onSaveProjectAs;
   final VoidCallback? onCloseProject;
   final VoidCallback? onRenameProject;
+  final VoidCallback? onOpenSettings;
+  final VoidCallback? onOpenConflicts;
   final ValueChanged<String>? onSearchChanged;
   final FocusNode? searchFocusNode;
   final VoidCallback? onToggleRightPanel;
@@ -280,6 +286,10 @@ class TopBar extends StatelessWidget {
             onAddFolder?.call();
           case _FileMenuAction.rescan:
             onRescan?.call();
+          case _FileMenuAction.openSettings:
+            onOpenSettings?.call();
+          case _FileMenuAction.openConflicts:
+            onOpenConflicts?.call();
           case _FileMenuAction.closeProject:
             onCloseProject?.call();
         }
@@ -346,6 +356,22 @@ class TopBar extends StatelessWidget {
           LucideIcons.pencil,
           '프로젝트 이름 변경...',
           enabled: onRenameProject != null,
+        ),
+        const PopupMenuDivider(),
+        _menuItem(
+          context,
+          _FileMenuAction.openConflicts,
+          LucideIcons.gitCompareArrows,
+          '충돌 해결...',
+          enabled: onOpenConflicts != null,
+        ),
+        _menuItem(
+          context,
+          _FileMenuAction.openSettings,
+          LucideIcons.settings,
+          '환경설정',
+          shortcut: 'Ctrl+,',
+          enabled: onOpenSettings != null,
         ),
         const PopupMenuDivider(),
         _menuItem(

@@ -19,7 +19,10 @@ android {
         applicationId = "com.langforge.langforge"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // 23, not Flutter's default 21: flutter_secure_storage needs
+        // EncryptedSharedPreferences, which does not exist below 23
+        // (MOBILE.md 1.5).
+        minSdk = maxOf(flutter.minSdkVersion, 23)
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

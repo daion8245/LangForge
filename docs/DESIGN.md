@@ -354,7 +354,10 @@ pack.mcmeta 미리보기    { "pack": { "pack_format": 15 } }
 | `size.buttonSecondary` | 28px | 7.1 Secondary · Icon |
 | `size.buttonTertiary` | 25px | 7.1 Tertiary |
 | `size.buttonDanger` | 32px | 7.1 Danger |
-| `size.checkbox` | 15px | 7.6 체크박스 |
+| `size.checkbox` | 15px | 7.4 체크박스 |
+| `size.toggleTrackW` | 36px | 7.6 토글 트랙 폭 |
+| `size.toggleTrackH` | 20px | 7.6 토글 트랙 높이 |
+| `size.toggleKnob` | 16px | 7.6 토글 손잡이 |
 | `size.statusDot` | 6px | 7.7 상태 점 |
 | `size.iconSm` | 14px | 7절 인라인 아이콘 |
 | `size.iconMd` | 16px | 7절 버튼 아이콘 |

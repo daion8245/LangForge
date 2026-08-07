@@ -62,6 +62,8 @@ class EditorShell extends StatefulWidget {
     this.scanMessage,
     this.rejectedSummary = const [],
     this.onOpenGlossary,
+    this.onOpenSettings,
+    this.onOpenConflicts,
   });
 
   final List<InputFile> inputFiles;
@@ -138,6 +140,8 @@ class EditorShell extends StatefulWidget {
   final String? scanMessage;
   final List<String> rejectedSummary;
   final VoidCallback? onOpenGlossary;
+  final VoidCallback? onOpenSettings;
+  final VoidCallback? onOpenConflicts;
 
   @override
   State<EditorShell> createState() => _EditorShellState();
@@ -384,6 +388,8 @@ class _EditorShellState extends State<EditorShell> {
             onRenameProject: widget.isTranslating
                 ? null
                 : widget.onRenameProject,
+            onOpenSettings: widget.onOpenSettings,
+            onOpenConflicts: widget.onOpenConflicts,
             isLocked: widget.isTranslating,
             onSearchChanged: widget.onSearchChanged,
             searchFocusNode: widget.searchFocusNode,

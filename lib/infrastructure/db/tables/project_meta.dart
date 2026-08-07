@@ -20,6 +20,11 @@ class ProjectMeta extends Table {
   TextColumn get packIconMode =>
       text().withDefault(const Constant('default'))();
   TextColumn get packIconPath => text().nullable()();
+
+  /// [ConflictPriority] wire name. Only ever preselects — see TECHNICAL.md 3.4.
+  TextColumn get conflictPriority =>
+      text().withDefault(const Constant('manual'))();
+
   TextColumn get togglesJson => text().withDefault(const Constant('{}'))();
 
   @override

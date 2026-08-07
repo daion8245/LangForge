@@ -1726,7 +1726,19 @@ library;
 
 ### 11.7 골든(스크린샷) 테스트
 
-MVP 범위 밖입니다. UI 가 안정된 뒤 1.0 에서 `alchemist` 로 도입을 검토합니다. `golden_toolkit` 은 2023년 이후 갱신이 없어 쓰지 않습니다.
+**도입하지 않습니다** (Phase 12 결정 · ROADMAP Q4).
+
+`golden_toolkit` 은 2023년 이후 갱신이 없어 후보에서 제외했고, 남은 후보인 `alchemist` 도 1.0 에는 넣지 않습니다.
+
+```text
+근거
+├── 화면 회귀는 위젯 테스트가 이미 값으로 검증한다 (레이아웃 붕괴 · 패널 접힘 · 2.0배 텍스트)
+├── 스크린샷은 Windows 폰트 렌더링 차이에 민감해서 CI 에서 거짓 실패를 만들기 쉽다
+└── 1인 개발에서 골든 갱신 비용이 검출하는 결함보다 크다
+
+재검토 조건
+└── 기여자가 늘어 UI 변경을 리뷰로 걸러야 할 때
+```
 
 ---
 
@@ -1858,8 +1870,12 @@ Authorization 헤더 전체
 
 ```powershell
 flutter build windows --release
-# build\windows\x64\runner\Release\ 를 ZIP 으로 묶음
+powershell -ExecutionPolicy Bypass -File tool/package_portable.ps1
 ```
+
+`tool/package_portable.ps1` 이 아래 ZIP 을 만듭니다. 스크립트는 `pubspec.yaml` 의 `version` 과
+`lib/app_version.dart` 의 `appVersion` 이 다르면 포장하지 않고 실패합니다 — 보고서에 찍히는
+버전과 배포본 버전이 갈라지는 것을 막습니다.
 
 ZIP 에 포함할 것:
 
@@ -1937,5 +1953,5 @@ LangForge-{version}-windows-x64.zip
 | Q3 | 검색이 `LIKE` 로 충분한지, FTS5 가 필요한지 | Phase 1 실측 후 |
 | Q4 | Isolate 풀 크기 4 가 적절한지 (IO 바운드 비중에 따라 다름) | Phase 1 실측 후 |
 | Q5 | ~~DeepL·Google·Papago 의 현재 엔드포인트와 인증 방식~~ → Phase 8.1 에서 확정. 아래 6.2절·`providers.json` 참조 | ✅ Phase 8 |
-| Q7 | 코드 서명 인증서를 도입할 것인가 (SmartScreen 경고 제거) | 1.0 이후 |
+| Q7 | ~~코드 서명 인증서를 도입할 것인가 (SmartScreen 경고 제거)~~ → **도입하지 않음.** 무료 MIT 로컬 도구에 연간 인증서 비용을 얹지 않는다. 14.1 대로 서명 없는 포터블 ZIP 을 배포하고 SmartScreen 안내를 README 에 유지한다 | ✅ Phase 12 |
 | Q8 | `.lfproj` 를 SQLite 그대로 둘지, 압축 컨테이너로 감쌀지 | Phase 6 |

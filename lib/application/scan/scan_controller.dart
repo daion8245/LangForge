@@ -10,6 +10,8 @@ import '../../domain/model/entry_status.dart';
 // domain enum of the same name. The prefix keeps the persisted wire values
 // type-checked instead of spelling them as bare strings.
 import '../../domain/model/entry_status.dart' as model;
+import '../../domain/policy/conflict_preselector.dart';
+import '../../domain/policy/conflict_priority.dart';
 import '../../domain/validation/conflict_detector.dart';
 import '../../domain/validation/existing_translation_classifier.dart';
 import '../../domain/cache/cache_kind.dart';
@@ -24,9 +26,11 @@ import '../../infrastructure/isolate/messages.dart';
 import '../../domain/provider/translation_provider.dart' show CancellationToken;
 import '../../infrastructure/isolate/worker_pool.dart';
 import '../cache/cache_providers.dart';
+import '../conflict/conflict_providers.dart';
 import '../db_provider.dart';
 import '../project/project_language_pair.dart';
 import '../project/project_session.dart';
+import '../project/project_settings.dart';
 import '../settings/engine_settings.dart';
 
 class ScanState {
@@ -123,6 +127,11 @@ class ScanController extends Notifier<ScanState> {
   /// pulled into memory; only the keys that already look conflicted are loaded
   /// and handed to the domain rule, which stays the single definition of what
   /// counts as a conflict.
+  ///
+  /// Choices the user already made survive a rescan: a conflict whose namespace,
+  /// key and participant entry ids are unchanged keeps its resolution. The
+  /// priority setting only fills in `suggestedEntryId`, so a rebuilt conflict
+  /// still starts unresolved and still blocks export (AC-8.5 · AC-8.6).
   Future<int> refreshConflicts() async {
     final candidates = await _db
         .customSelect(
@@ -133,6 +142,11 @@ class ScanController extends Notifier<ScanState> {
           'HAVING COUNT(DISTINCT e.source_text) > 1',
         )
         .get();
+
+    final previous = await _db.select(_db.conflicts).get();
+    final previousByIdentity = {
+      for (final row in previous) _conflictIdentity(row): row,
+    };
 
     await _db.delete(_db.conflicts).go();
     if (candidates.isEmpty) return 0;
@@ -150,25 +164,119 @@ class ScanController extends Notifier<ScanState> {
     final conflicts = ConflictDetector.detect(
       namespaces: namespaceRows.toDomain(),
       entries: entryRows.toDomain(),
+      inputFileOrder: await _inputFileOrder(),
     );
     if (conflicts.isEmpty) return 0;
+
+    final priority = await ProjectSettings.readConflictPriority(_db);
 
     await _db.batch((b) {
       b.insertAll(_db.conflicts, [
         for (final conflict in conflicts)
-          ConflictsCompanion.insert(
-            id: _uuid.v4(),
-            namespaceName: conflict.namespaceName,
-            key: conflict.key,
-            participantsJson: jsonEncode([
-              {'sourceText': conflict.sourceTextA},
-              {'sourceText': conflict.sourceTextB},
-            ]),
-          ),
+          _buildConflict(conflict, priority, previousByIdentity),
       ]);
     });
 
     return conflicts.length;
+  }
+
+  ConflictsCompanion _buildConflict(
+    ConflictItem conflict,
+    ConflictPriority priority,
+    Map<String, Conflict> previousByIdentity,
+  ) {
+    final participantsJson = jsonEncode([
+      for (final participant in conflict.participants)
+        {
+          'entryId': participant.entryId,
+          'namespaceId': participant.namespaceId,
+          'inputFileId': participant.inputFileId,
+          'addOrder': participant.addOrder,
+          'sourceText': participant.sourceText,
+        },
+    ]);
+
+    final suggested = ConflictPreselector.suggest(
+      conflict: conflict,
+      priority: priority,
+    );
+
+    // Same namespace, same key, same participants — the user's earlier answer
+    // still applies, so re-asking would be busywork (AC-10.7 in spirit).
+    final identity = _identityOf(
+      conflict.namespaceName,
+      conflict.key,
+      participantsJson,
+    );
+    final carried = previousByIdentity[identity];
+    final keptResolution =
+        carried != null &&
+        carried.resolved &&
+        carried.resolvedEntryId != null &&
+        conflict.participants.any((p) => p.entryId == carried.resolvedEntryId);
+
+    return ConflictsCompanion.insert(
+      id: carried?.id ?? _uuid.v4(),
+      namespaceName: conflict.namespaceName,
+      key: conflict.key,
+      participantsJson: participantsJson,
+      suggestedEntryId: Value(suggested?.entryId),
+      resolvedEntryId: Value(keptResolution ? carried.resolvedEntryId : null),
+      resolved: Value(keptResolution),
+    );
+  }
+
+  static String _conflictIdentity(Conflict row) =>
+      _identityOf(row.namespaceName, row.key, row.participantsJson);
+
+  static String _identityOf(
+    String namespaceName,
+    String key,
+    String participantsJson,
+  ) => '$namespaceName $key $participantsJson';
+
+  /// Input file id -> add-order index, oldest first. `id` breaks ties so two
+  /// files added in the same millisecond still order deterministically.
+  Future<Map<String, int>> _inputFileOrder() async {
+    final files =
+        await (_db.select(_db.inputFiles)..orderBy([
+              (t) => OrderingTerm.asc(t.addedAt),
+              (t) => OrderingTerm.asc(t.id),
+            ]))
+            .get();
+    return {for (var i = 0; i < files.length; i++) files[i].id: i};
+  }
+
+  /// Records the user's final choice for one conflict (AC-8.6).
+  ///
+  /// Only ever called from the conflict modal — nothing else in the app is
+  /// allowed to set `resolved`.
+  Future<void> resolveConflict({
+    required String conflictId,
+    required String entryId,
+  }) async {
+    await (_db.update(
+      _db.conflicts,
+    )..where((t) => t.id.equals(conflictId))).write(
+      ConflictsCompanion(
+        resolvedEntryId: Value(entryId),
+        resolved: const Value(true),
+      ),
+    );
+    ref.invalidate(conflictListProvider);
+  }
+
+  /// Undoes a resolution, putting the conflict back in the blocking set.
+  Future<void> unresolveConflict(String conflictId) async {
+    await (_db.update(
+      _db.conflicts,
+    )..where((t) => t.id.equals(conflictId))).write(
+      const ConflictsCompanion(
+        resolvedEntryId: Value(null),
+        resolved: Value(false),
+      ),
+    );
+    ref.invalidate(conflictListProvider);
   }
 
   void setActiveFile(String? fileId) {
@@ -539,6 +647,7 @@ class ScanController extends Notifier<ScanState> {
       _db.entries,
     )..where((tbl) => tbl.namespaceId.equals(namespaceId))).get();
     final previousByKey = {for (final e in previous) e.key: e};
+    final keepOnRescan = (await ProjectSettings.readToggles(_db)).keepOnRescan;
 
     await (_db.delete(
       _db.entries,
@@ -551,7 +660,8 @@ class ScanController extends Notifier<ScanState> {
     for (final key in sourceData.keyOrder) {
       final sourceText = sourceData.entries[key] ?? '';
       final existingTrans = existingTargetData?.entries[key];
-      final prior = previousByKey[key];
+      // Off means a rescan throws project work away (ROADMAP 10.3).
+      final prior = keepOnRescan ? previousByKey[key] : null;
 
       final verdict = ExistingTranslationClassifier.classify(
         sourceText: sourceText,

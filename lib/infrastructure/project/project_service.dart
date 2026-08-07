@@ -5,6 +5,7 @@ import 'package:drift/native.dart';
 import 'package:flutter/foundation.dart' show compute;
 import 'package:logging/logging.dart';
 
+import '../../app_version.dart' as version;
 import '../../domain/model/entry_status.dart';
 import '../db/app_database.dart';
 import '../isolate/file_verify_worker.dart';
@@ -67,7 +68,7 @@ abstract final class ProjectService {
   static Future<AppDatabase> createProject({
     required String filePath,
     required String projectName,
-    String appVersion = '0.1.0',
+    String appVersion = version.appVersion,
   }) async {
     final file = File(ProjectPaths.ensureProjectExtension(filePath));
     file.parent.createSync(recursive: true);
@@ -84,7 +85,7 @@ abstract final class ProjectService {
   /// `.bak`, and rolls back to that backup if the migration fails.
   static Future<AppDatabase> openProject(
     String filePath, {
-    String appVersion = '0.1.0',
+    String appVersion = version.appVersion,
   }) async {
     final file = File(filePath);
     if (!file.existsSync()) {
@@ -152,7 +153,7 @@ abstract final class ProjectService {
     required AppDatabase source,
     required String targetPath,
     required String projectName,
-    String appVersion = '0.1.0',
+    String appVersion = version.appVersion,
   }) async {
     final finalPath = ProjectPaths.ensureProjectExtension(targetPath);
     final finalFile = File(finalPath);

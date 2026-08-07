@@ -77,6 +77,41 @@ abstract final class ExportGate {
         .toList();
   }
 
+  /// Same rules as [evaluate], but fed pre-aggregated counts.
+  ///
+  /// [evaluate] needs every entry in memory purely to count statuses, which is
+  /// exactly what a phone cannot afford for a 48,000-key project (MOBILE.md
+  /// 1.2). The counts come out of SQL instead, and both paths run the same
+  /// reason list below so the two can never disagree about what blocks an
+  /// export.
+  static ExportVerdict evaluateAggregate({
+    required int activeNamespaceCount,
+    required int jsonErrorNamespaceCount,
+    required ExportSummary summary,
+    required bool isTranslating,
+    bool hasUnresolvedConflict = false,
+    bool hasCorruptTargetFile = false,
+    ExportPolicyOptions options = const ExportPolicyOptions(),
+  }) {
+    final reasons = <BlockReason>[];
+
+    if (isTranslating) reasons.add(BlockReason.translationRunning);
+    if (activeNamespaceCount == 0) {
+      reasons.add(BlockReason.noNamespaceSelected);
+    }
+    if (jsonErrorNamespaceCount > 0) reasons.add(BlockReason.jsonError);
+    if (hasUnresolvedConflict) reasons.add(BlockReason.unresolvedConflict);
+    if (hasCorruptTargetFile) reasons.add(BlockReason.corruptTargetFile);
+    if (!options.allowPendingEntries && summary.pendingKeys > 0) {
+      reasons.add(BlockReason.pendingEntries);
+    }
+    if (!options.allowValidationFailed && summary.failedKeys > 0) {
+      reasons.add(BlockReason.validationFailed);
+    }
+
+    return reasons.isEmpty ? Allowed(summary) : Blocked(reasons);
+  }
+
   static ExportVerdict evaluate({
     required List<NamespaceUnit> namespaces,
     required List<TranslationEntry> entries,

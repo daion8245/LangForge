@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -36,6 +37,7 @@ class ProjectSession {
     this.lastSavedAt,
     this.notices = const [],
     this.errorMessage,
+    this.autoSaveEnabled = true,
   });
 
   static const String defaultName = 'Untitled Project';
@@ -60,6 +62,9 @@ class ProjectSession {
 
   final String? errorMessage;
 
+  /// Mirrors `togglesJson.autoSave` so [markDirty] does not need an async read.
+  final bool autoSaveEnabled;
+
   bool get hasFile => filePath != null;
 
   ProjectSession copyWith({
@@ -72,6 +77,7 @@ class ProjectSession {
     DateTime? lastSavedAt,
     List<String>? notices,
     String? errorMessage,
+    bool? autoSaveEnabled,
     bool clearFilePath = false,
     bool clearError = false,
   }) {
@@ -85,6 +91,7 @@ class ProjectSession {
       lastSavedAt: lastSavedAt ?? this.lastSavedAt,
       notices: notices ?? this.notices,
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
+      autoSaveEnabled: autoSaveEnabled ?? this.autoSaveEnabled,
     );
   }
 }
@@ -151,6 +158,7 @@ class ProjectSessionController extends Notifier<ProjectSession> {
         isDirty: false,
         lastSavedAt: meta?.updatedAt,
         notices: notice == null ? const [] : [notice],
+        autoSaveEnabled: _autoSaveFromTogglesJson(meta?.togglesJson),
         clearError: true,
       );
 
@@ -275,8 +283,27 @@ class ProjectSessionController extends Notifier<ProjectSession> {
     _autoSaveTimer?.cancel();
     // An unsaved project has nowhere to auto-save to; it waits for the first
     // explicit save rather than popping a dialog the user did not ask for.
-    if (!state.hasFile) return;
+    if (!state.hasFile || !state.autoSaveEnabled) return;
     _autoSaveTimer = Timer(autoSaveDebounce, () => unawaited(save()));
+  }
+
+  void setAutoSaveEnabled(bool enabled) {
+    if (state.autoSaveEnabled == enabled) return;
+    state = state.copyWith(autoSaveEnabled: enabled);
+    if (!enabled) _autoSaveTimer?.cancel();
+  }
+
+  /// Defaults to ON when the blob is missing or corrupt (TECHNICAL.md 3.4).
+  static bool _autoSaveFromTogglesJson(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return true;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return true;
+      final value = decoded['autoSave'];
+      return value is bool ? value : true;
+    } on FormatException {
+      return true;
+    }
   }
 
   /// Save point for the translation run: completion, pause, cancel, or error

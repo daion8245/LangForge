@@ -1,12 +1,23 @@
 import 'package:archive/archive.dart';
 
+import '../platform/memory_budget.dart';
+
+/// Size ceilings every archive read is held to.
+///
+/// The four size limits follow the host: a phone process is killed outright
+/// well below the desktop budget, so its ceilings sit inside the heap rather
+/// than at the edge of it (MOBILE.md 1.2). The two shape limits — the
+/// compression ratio and the entry count — are zip-bomb defences and do not
+/// vary; they are about what an archive is allowed to *claim*, not about how
+/// much memory the host has.
 abstract final class ArchiveLimits {
-  static const maxInputFileBytes = 512 * 1024 * 1024; // 512 MB
-  static const maxEntryBytes = 64 * 1024 * 1024; // 64 MB
-  static const maxTotalInflated = 2 * 1024 * 1024 * 1024; // 2 GB
+  static int get maxInputFileBytes => MemoryBudget.maxInputFileBytes;
+  static int get maxEntryBytes => MemoryBudget.maxArchiveEntryBytes;
+  static int get maxTotalInflated => MemoryBudget.maxTotalInflatedBytes;
+  static int get maxLangJsonBytes => MemoryBudget.maxLangJsonBytes;
+
   static const maxCompressionRatio = 200; // 200:1
   static const maxEntryCount = 100000;
-  static const maxLangJsonBytes = 32 * 1024 * 1024; // 32 MB
   static const maxValueLength = 8192; // Max value length in chars
 }
 

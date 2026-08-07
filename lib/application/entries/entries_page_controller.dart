@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../domain/model/entry_status.dart';
 import '../../infrastructure/db/app_database.dart';
 import '../../infrastructure/db/daos/entry_dao.dart';
+import '../../infrastructure/platform/memory_budget.dart';
 import '../db_provider.dart';
 
 /// The filter key the 문제 tab uses. It is not an [EntryStatus] — it stands for
@@ -12,6 +13,13 @@ const String problemStatusFilter = 'problem';
 /// 검증 실패 · 원문 유지 · 확인 필요. `빈 문자열 유지` is a normal outcome and is
 /// deliberately not in this list.
 const List<String> problemStatuses = <String>['invalid', 'fallback', 'confirm'];
+
+/// The filter key the mobile 재사용 chip uses (ROADMAP 13.2). Like
+/// [problemStatusFilter] it is a group, not an [EntryStatus].
+const String reuseStatusFilter = 'reuse';
+
+/// 기존 번역 유지 · 캐시 재사용 — the two outcomes that cost no API call.
+const List<String> reuseStatuses = <String>['kept', 'cache'];
 
 /// Which slice of the entry table the list is currently showing.
 class EntriesViewState {
@@ -30,15 +38,24 @@ class EntriesViewState {
   final String? searchText;
 
   /// Grows as the user scrolls. Rows held in memory stay bounded by
-  /// [entryPageSize] × this.
+  /// [MemoryBudget.entryPageSize] × this — a phone holds half of what the
+  /// desktop does (MOBILE.md 1.2).
   final int loadedPages;
 
-  int get limit => entryPageSize * loadedPages;
+  int get limit => MemoryBudget.entryPageSize * loadedPages;
+
+  /// The statuses [statusFilter] stands for when it names a group rather than
+  /// a single status. Null for 전체 and for any plain status.
+  List<String>? get groupStatuses => switch (statusFilter) {
+    problemStatusFilter => problemStatuses,
+    reuseStatusFilter => reuseStatuses,
+    _ => null,
+  };
 
   EntryQuery get query => EntryQuery(
     namespaceId: namespaceId,
-    status: statusFilter == problemStatusFilter ? null : statusFilter,
-    statuses: statusFilter == problemStatusFilter ? problemStatuses : null,
+    status: groupStatuses == null ? statusFilter : null,
+    statuses: groupStatuses,
     searchText: searchText,
     limit: limit,
   );

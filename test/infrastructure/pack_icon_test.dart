@@ -65,16 +65,23 @@ void main() {
       expect(await PackIconLoader.load(mode: PackIconMode.none), isNull);
     });
 
-    test('custom reads the file the user picked', () async {
+    test('custom falls back when the file is not a valid pack icon', () async {
       final custom = File('${tempDir.path}/custom.png')
         ..writeAsBytesSync([1, 2, 3, 4]);
 
+      final result = await PackIconLoader.load(
+        mode: PackIconMode.custom,
+        customPath: custom.path,
+      );
+      // Invalid bytes must not ship; bundled (or null in plain unit tests).
+      expect(result, anyOf(isNull, isNot(equals([1, 2, 3, 4]))));
+    });
+
+    test('mod mode uses supplied bytes when they validate', () async {
+      final valid = bundledIcon().readAsBytesSync();
       expect(
-        await PackIconLoader.load(
-          mode: PackIconMode.custom,
-          customPath: custom.path,
-        ),
-        equals([1, 2, 3, 4]),
+        await PackIconLoader.load(mode: PackIconMode.mod, modIconBytes: valid),
+        equals(valid),
       );
     });
 

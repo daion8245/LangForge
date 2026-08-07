@@ -4,41 +4,50 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart' show SemanticsService;
-import 'package:flutter/services.dart' show MissingPluginException;
+import 'package:flutter/services.dart'
+    show MissingPluginException, SystemSound, SystemSoundType;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:window_manager/window_manager.dart';
 
+import '../app_version.dart';
 import '../application/cache/cache_providers.dart';
 import '../application/db_provider.dart';
 import '../application/entries/entries_page_controller.dart';
 import '../application/merge/merge_hydrator.dart';
+import '../application/conflict/conflict_providers.dart';
 import '../application/project/project_language_pair.dart';
 import '../application/project/project_session.dart';
+import '../application/project/project_settings.dart';
 import '../application/scan/scan_controller.dart';
 import '../application/settings/engine_settings.dart';
 import '../application/translation/translation_controller.dart';
 import '../application/translation/translation_runner.dart' show RunnerStatus;
+import '../domain/validation/pack_icon_validator.dart';
 import '../infrastructure/db/app_database.dart';
 import '../infrastructure/db/row_mappers.dart';
+import '../infrastructure/export/mod_icon_extractor.dart';
 import '../infrastructure/export/pack_icon_loader.dart';
+import '../infrastructure/export/report_exporter.dart';
 import '../infrastructure/export/resource_pack_exporter.dart';
+import '../infrastructure/platform/app_platform.dart';
 import '../infrastructure/project/project_paths.dart';
 import '../presentation/common/close_confirmation_dialog.dart';
+import '../presentation/conflict/conflict_modal_view.dart';
 import '../presentation/editor/editor_shell.dart';
 import '../presentation/empty/empty_project_view.dart';
 import '../presentation/export/export_modal_view.dart';
 import '../presentation/glossary/glossary_screen.dart';
+import '../presentation/mobile/mobile_root.dart';
+import '../presentation/settings/settings_screen.dart';
 import '../presentation/start/start_screen_view.dart';
 import 'shortcuts.dart';
 import 'theme/lf_colors.dart';
+import 'theme/lf_mobile_sizes.dart';
 import 'theme/lf_radii.dart';
 import 'theme/lf_sizes.dart';
 import 'theme/lf_spacing.dart';
 import 'theme/lf_typography.dart';
-
-/// Shown in the exported report header.
-const String appVersion = '0.1.0';
 
 class LangForgeApp extends ConsumerWidget {
   const LangForgeApp({super.key});
@@ -52,6 +61,7 @@ class LangForgeApp extends ConsumerWidget {
         LfRadii.standard,
         LfTypography.standard,
         LfSizes.standard,
+        LfMobileSizes.standard,
       ],
     );
 
@@ -87,6 +97,9 @@ class _AppRootState extends ConsumerState<AppRoot> with WindowListener {
   /// Widget tests run without the desktop window plugin, so a failure here is
   /// downgraded to "no interception" rather than taking the app down.
   Future<void> _interceptWindowClose() async {
+    // Android has no window to intercept, and the plugin has no implementation
+    // there — asking would only raise the exception the catch below swallows.
+    if (!AppPlatform.isDesktop) return;
     try {
       await windowManager.setPreventClose(true);
       if (!mounted) return;
@@ -134,6 +147,11 @@ class _AppRootState extends ConsumerState<AppRoot> with WindowListener {
 
   @override
   Widget build(BuildContext context) {
+    // The phone gets its own shell rather than a narrowed desktop one
+    // (DESIGN.md 6.3). Below 768px the desktop layout has no panels left to
+    // collapse, and its interactions assume a pointer.
+    if (AppPlatform.isMobile) return const MobileRoot(appVersion: appVersion);
+
     final session = ref.watch(projectSessionProvider);
     return session.isOpen ? const ProjectWorkspace() : const StartScreen();
   }
@@ -285,6 +303,25 @@ class _ProjectWorkspaceState extends ConsumerState<ProjectWorkspace> {
       message,
       Directionality.of(context),
     );
+
+    final finished =
+        next.status == RunnerStatus.idle &&
+        previous != null &&
+        previous.status != RunnerStatus.idle;
+    if (finished) {
+      final notify =
+          ref
+              .read(projectSettingsProvider)
+              .asData
+              ?.value
+              .toggles
+              .notifyOnComplete ??
+          true;
+      if (notify) {
+        _showMessage(message);
+        SystemSound.play(SystemSoundType.alert);
+      }
+    }
   }
 
   ScanController get _scan => ref.read(scanControllerProvider.notifier);
@@ -426,6 +463,21 @@ class _ProjectWorkspaceState extends ConsumerState<ProjectWorkspace> {
     );
   }
 
+  Future<void> _openSettings() async {
+    if (!mounted) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
+    );
+  }
+
+  Future<void> _openConflicts() async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (_) => const ConflictModalView(),
+    );
+  }
+
   /// `Ctrl+R`.
   void _startTranslation() {
     if (_isTranslating) return;
@@ -499,6 +551,7 @@ class _ProjectWorkspaceState extends ConsumerState<ProjectWorkspace> {
       onFocusSearch: _focusSearch,
       onEscape: _clearSearch,
       onNextNamespace: _nextNamespace,
+      onOpenSettings: () => unawaited(_openSettings()),
       child: StreamBuilder<List<InputFile>>(
         stream: db.select(db.inputFiles).watch(),
         builder: (context, filesSnapshot) {
@@ -588,6 +641,8 @@ class _ProjectWorkspaceState extends ConsumerState<ProjectWorkspace> {
                     translationProgress: translationState.percent,
                     cacheHitRateLabel: translationState.cacheHitRateLabel,
                     onOpenGlossary: () => unawaited(_openGlossary()),
+                    onOpenSettings: () => unawaited(_openSettings()),
+                    onOpenConflicts: () => unawaited(_openConflicts()),
                     onAddFiles: () => unawaited(_addFiles()),
                     onAddFolder: () => unawaited(_addFolder()),
                     onRescan: () => unawaited(_rescan()),
@@ -636,7 +691,6 @@ class _ProjectWorkspaceState extends ConsumerState<ProjectWorkspace> {
     final mcVersionsJsonStr = await DefaultAssetBundle.of(
       context,
     ).loadString('assets/data/mc_versions.json');
-    final packIcon = await PackIconLoader.load();
 
     // Export is the one operation that legitimately needs every row.
     final inputFiles = await db.select(db.inputFiles).get();
@@ -644,6 +698,8 @@ class _ProjectWorkspaceState extends ConsumerState<ProjectWorkspace> {
     final entryRows = await db.select(db.entries).get();
     final engine = ref.read(engineSettingsProvider);
     final langs = await ProjectLanguagePair.fromDb(db);
+    final settings = await ProjectSettings.read(db);
+    final meta = await db.select(db.projectMeta).getSingleOrNull();
     final hydrator = MergeHydrator(
       db: db,
       cacheStore: ref.read(translationCacheStoreProvider),
@@ -657,9 +713,39 @@ class _ProjectWorkspaceState extends ConsumerState<ProjectWorkspace> {
     final unresolvedConflicts = await (db.select(
       db.conflicts,
     )..where((t) => t.resolved.equals(false))).get();
+    final resolvedRows = await (db.select(
+      db.conflicts,
+    )..where((t) => t.resolved.equals(true))).get();
+    final conflictResolutions = <String, Map<String, String>>{};
+    for (final row in resolvedRows) {
+      final entryId = row.resolvedEntryId;
+      if (entryId == null) continue;
+      conflictResolutions.putIfAbsent(row.namespaceName, () => {})[row.key] =
+          entryId;
+    }
+
+    // Listed in the report whether or not they were resolved, so the exported
+    // pack always says which files disagreed (TECHNICAL.md 8.6).
+    final conflictViews = await ref.read(conflictListProvider.future);
+    final reportConflicts = [
+      for (final conflict in conflictViews)
+        ReportConflict(
+          namespaceName: conflict.namespaceName,
+          key: conflict.key,
+          participantNames: [
+            for (final candidate in conflict.candidates)
+              candidate.inputFileName,
+          ],
+          resolution: _conflictResolutionLabel(conflict),
+        ),
+    ];
 
     final domainNamespaces = namespaces.toDomain();
     if (!mounted) return;
+
+    final unresolvedCount =
+        ref.read(unresolvedConflictCountProvider).asData?.value ??
+        unresolvedConflicts.length;
 
     await showDialog<void>(
       context: context,
@@ -667,8 +753,17 @@ class _ProjectWorkspaceState extends ConsumerState<ProjectWorkspace> {
         namespaces: domainNamespaces,
         entries: allEntries,
         isTranslating: translationState.isActive,
-        hasUnresolvedConflict: unresolvedConflicts.isNotEmpty,
+        hasUnresolvedConflict: unresolvedCount > 0,
+        allowSkipChecks: settings.toggles.allowSkipChecks,
+        outputFileName: langs.outputFileName,
+        targetLangCode: langs.targetLang,
         mcVersionsJsonStr: mcVersionsJsonStr,
+        onOpenConflicts: unresolvedCount > 0
+            ? () {
+                Navigator.of(modalContext).pop();
+                unawaited(_openConflicts());
+              }
+            : null,
         onExportConfirmed:
             (formatOption, mcVersion, packFormat, options) async {
               final outputDir = await FilePicker.getDirectoryPath();
@@ -679,7 +774,14 @@ class _ProjectWorkspaceState extends ConsumerState<ProjectWorkspace> {
                 ExportFormatOption.folderPack => ExportFormat.folderPack,
                 ExportFormatOption.pathJson => ExportFormat.pathJson,
                 ExportFormatOption.namespaceJson => ExportFormat.namespaceJson,
+                ExportFormatOption.perModPacks => ExportFormat.perModPacks,
               };
+
+              final packIcon = await _loadPackIconForExport(
+                mode: PackIconMode.fromWire(meta?.packIconMode ?? 'default'),
+                customPath: meta?.packIconPath,
+                inputFiles: inputFiles,
+              );
 
               try {
                 final outputPath = await ResourcePackExporter.export(
@@ -696,7 +798,11 @@ class _ProjectWorkspaceState extends ConsumerState<ProjectWorkspace> {
                   outputFileName: langs.outputFileName,
                   appVersion: appVersion,
                   staleKeysByNamespace: scanState.staleKeysByNamespace,
+                  conflictResolutions: conflictResolutions,
+                  conflicts: reportConflicts,
                   packIconBytes: packIcon,
+                  zipName:
+                      '${langs.targetLang.toUpperCase()}_Translation_Pack.zip',
                 );
                 _showMessage('내보내기 완료: $outputPath');
               } catch (error) {
@@ -705,6 +811,44 @@ class _ProjectWorkspaceState extends ConsumerState<ProjectWorkspace> {
             },
       ),
     );
+  }
+
+  static String _conflictResolutionLabel(ConflictView conflict) {
+    if (!conflict.resolved) return '미해결';
+    final chosen = conflict.resolvedEntryId;
+    for (final candidate in conflict.candidates) {
+      if (candidate.entryId == chosen) return '${candidate.inputFileName} 선택';
+    }
+    return '해결됨';
+  }
+
+  /// Cosmetic only — never throws into the export path (TECHNICAL.md 8.4b).
+  Future<List<int>?> _loadPackIconForExport({
+    required PackIconMode mode,
+    required String? customPath,
+    required List<InputFile> inputFiles,
+  }) async {
+    switch (mode) {
+      case PackIconMode.none:
+        return null;
+      case PackIconMode.custom:
+        final loaded = await PackIconLoader.load(
+          mode: PackIconMode.custom,
+          customPath: customPath,
+        );
+        if (loaded == null) return PackIconLoader.load();
+        if (!PackIconValidator.validate(loaded).isValid) {
+          return PackIconLoader.load();
+        }
+        return loaded;
+      case PackIconMode.mod:
+        final extracted = await ModIconExtractor.extractFromFiles(
+          inputFiles.map((f) => f.absolutePath),
+        );
+        return extracted ?? await PackIconLoader.load();
+      case PackIconMode.bundled:
+        return PackIconLoader.load();
+    }
   }
 }
 

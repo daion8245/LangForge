@@ -22,6 +22,8 @@ class LfColors extends ThemeExtension<LfColors> {
     required this.borderHover,
     required this.borderDashed,
     required this.borderAccent,
+    required this.borderCheckbox,
+    required this.borderRadio,
     required this.textPrimary,
     required this.textStrong,
     required this.textSecondary,
@@ -84,6 +86,12 @@ class LfColors extends ThemeExtension<LfColors> {
   final Color borderHover;
   final Color borderDashed;
   final Color borderAccent;
+
+  /// Unchecked checkbox outline — DESIGN.md 7.4.
+  final Color borderCheckbox;
+
+  /// Unselected radio outline — DESIGN.md 7.5.
+  final Color borderRadio;
 
   final Color textPrimary;
   final Color textStrong;
@@ -149,6 +157,8 @@ class LfColors extends ThemeExtension<LfColors> {
     borderHover: Color(0xFF3D3D3D),
     borderDashed: Color(0xFF3A3A3A),
     borderAccent: Color(0xFF3D4F4A),
+    borderCheckbox: Color(0xFF454545),
+    borderRadio: Color(0xFF4A4A4A),
 
     textPrimary: Color(0xFFF3F3F3),
     textStrong: Color(0xFFE8E8E8),
@@ -215,6 +225,8 @@ class LfColors extends ThemeExtension<LfColors> {
     Color? borderHover,
     Color? borderDashed,
     Color? borderAccent,
+    Color? borderCheckbox,
+    Color? borderRadio,
     Color? textPrimary,
     Color? textStrong,
     Color? textSecondary,
@@ -276,6 +288,8 @@ class LfColors extends ThemeExtension<LfColors> {
       borderHover: borderHover ?? this.borderHover,
       borderDashed: borderDashed ?? this.borderDashed,
       borderAccent: borderAccent ?? this.borderAccent,
+      borderCheckbox: borderCheckbox ?? this.borderCheckbox,
+      borderRadio: borderRadio ?? this.borderRadio,
       textPrimary: textPrimary ?? this.textPrimary,
       textStrong: textStrong ?? this.textStrong,
       textSecondary: textSecondary ?? this.textSecondary,
@@ -342,6 +356,8 @@ class LfColors extends ThemeExtension<LfColors> {
       borderHover: Color.lerp(borderHover, other.borderHover, t)!,
       borderDashed: Color.lerp(borderDashed, other.borderDashed, t)!,
       borderAccent: Color.lerp(borderAccent, other.borderAccent, t)!,
+      borderCheckbox: Color.lerp(borderCheckbox, other.borderCheckbox, t)!,
+      borderRadio: Color.lerp(borderRadio, other.borderRadio, t)!,
       textPrimary: Color.lerp(textPrimary, other.textPrimary, t)!,
       textStrong: Color.lerp(textStrong, other.textStrong, t)!,
       textSecondary: Color.lerp(textSecondary, other.textSecondary, t)!,

@@ -1,0 +1,39 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  LangForge app icon master (DESIGN.md 12.1).
+  Anvil silhouette + A→가. Flat #4fc0a1 on #10231e. No gradients.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="LangForge">
+  <rect width="256" height="256" fill="#10231e"/>
+
+  <!-- Language mark: A → 가 (hand-drawn outlines, not typefaces) -->
+  <g fill="none" stroke="#4fc0a1" stroke-width="14" stroke-linecap="round" stroke-linejoin="round">
+    <!-- A -->
+    <path d="M36 92 L56 40 L76 92"/>
+    <path d="M44 74 H68"/>
+    <!-- arrow -->
+    <path d="M92 66 H132"/>
+    <path d="M118 50 L134 66 L118 82"/>
+    <!-- 가 = ㄱ + ㅏ -->
+    <path d="M152 44 H196 V92"/>
+    <path d="M214 44 V92"/>
+    <path d="M214 68 H234"/>
+  </g>
+
+  <!-- Anvil silhouette -->
+  <g fill="#4fc0a1">
+    <!-- horn + face -->
+    <path d="M40 118
+             C40 110 48 104 58 104
+             H188
+             C210 104 222 112 228 124
+             C232 132 228 140 218 140
+             H52
+             C44 140 40 132 40 118 Z"/>
+    <!-- neck -->
+    <rect x="100" y="140" width="56" height="36" rx="4"/>
+    <!-- base -->
+    <path d="M72 176 H184 L196 208 H60 Z"/>
+    <rect x="48" y="204" width="160" height="18" rx="4"/>
+  </g>
+</svg>

@@ -165,6 +165,18 @@ class $ProjectMetaTable extends ProjectMeta
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _conflictPriorityMeta = const VerificationMeta(
+    'conflictPriority',
+  );
+  @override
+  late final GeneratedColumn<String> conflictPriority = GeneratedColumn<String>(
+    'conflict_priority',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('manual'),
+  );
   static const VerificationMeta _togglesJsonMeta = const VerificationMeta(
     'togglesJson',
   );
@@ -193,6 +205,7 @@ class $ProjectMetaTable extends ProjectMeta
     mcVersion,
     packIconMode,
     packIconPath,
+    conflictPriority,
     togglesJson,
   ];
   @override
@@ -316,6 +329,15 @@ class $ProjectMetaTable extends ProjectMeta
         ),
       );
     }
+    if (data.containsKey('conflict_priority')) {
+      context.handle(
+        _conflictPriorityMeta,
+        conflictPriority.isAcceptableOrUnknown(
+          data['conflict_priority']!,
+          _conflictPriorityMeta,
+        ),
+      );
+    }
     if (data.containsKey('toggles_json')) {
       context.handle(
         _togglesJsonMeta,
@@ -390,6 +412,10 @@ class $ProjectMetaTable extends ProjectMeta
         DriftSqlType.string,
         data['${effectivePrefix}pack_icon_path'],
       ),
+      conflictPriority: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}conflict_priority'],
+      )!,
       togglesJson: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}toggles_json'],
@@ -418,6 +444,9 @@ class ProjectMetaData extends DataClass implements Insertable<ProjectMetaData> {
   final String mcVersion;
   final String packIconMode;
   final String? packIconPath;
+
+  /// [ConflictPriority] wire name. Only ever preselects — see TECHNICAL.md 3.4.
+  final String conflictPriority;
   final String togglesJson;
   const ProjectMetaData({
     required this.id,
@@ -434,6 +463,7 @@ class ProjectMetaData extends DataClass implements Insertable<ProjectMetaData> {
     required this.mcVersion,
     required this.packIconMode,
     this.packIconPath,
+    required this.conflictPriority,
     required this.togglesJson,
   });
   @override
@@ -459,6 +489,7 @@ class ProjectMetaData extends DataClass implements Insertable<ProjectMetaData> {
     if (!nullToAbsent || packIconPath != null) {
       map['pack_icon_path'] = Variable<String>(packIconPath);
     }
+    map['conflict_priority'] = Variable<String>(conflictPriority);
     map['toggles_json'] = Variable<String>(togglesJson);
     return map;
   }
@@ -485,6 +516,7 @@ class ProjectMetaData extends DataClass implements Insertable<ProjectMetaData> {
       packIconPath: packIconPath == null && nullToAbsent
           ? const Value.absent()
           : Value(packIconPath),
+      conflictPriority: Value(conflictPriority),
       togglesJson: Value(togglesJson),
     );
   }
@@ -509,6 +541,7 @@ class ProjectMetaData extends DataClass implements Insertable<ProjectMetaData> {
       mcVersion: serializer.fromJson<String>(json['mcVersion']),
       packIconMode: serializer.fromJson<String>(json['packIconMode']),
       packIconPath: serializer.fromJson<String?>(json['packIconPath']),
+      conflictPriority: serializer.fromJson<String>(json['conflictPriority']),
       togglesJson: serializer.fromJson<String>(json['togglesJson']),
     );
   }
@@ -530,6 +563,7 @@ class ProjectMetaData extends DataClass implements Insertable<ProjectMetaData> {
       'mcVersion': serializer.toJson<String>(mcVersion),
       'packIconMode': serializer.toJson<String>(packIconMode),
       'packIconPath': serializer.toJson<String?>(packIconPath),
+      'conflictPriority': serializer.toJson<String>(conflictPriority),
       'togglesJson': serializer.toJson<String>(togglesJson),
     };
   }
@@ -549,6 +583,7 @@ class ProjectMetaData extends DataClass implements Insertable<ProjectMetaData> {
     String? mcVersion,
     String? packIconMode,
     Value<String?> packIconPath = const Value.absent(),
+    String? conflictPriority,
     String? togglesJson,
   }) => ProjectMetaData(
     id: id ?? this.id,
@@ -565,6 +600,7 @@ class ProjectMetaData extends DataClass implements Insertable<ProjectMetaData> {
     mcVersion: mcVersion ?? this.mcVersion,
     packIconMode: packIconMode ?? this.packIconMode,
     packIconPath: packIconPath.present ? packIconPath.value : this.packIconPath,
+    conflictPriority: conflictPriority ?? this.conflictPriority,
     togglesJson: togglesJson ?? this.togglesJson,
   );
   ProjectMetaData copyWithCompanion(ProjectMetaCompanion data) {
@@ -599,6 +635,9 @@ class ProjectMetaData extends DataClass implements Insertable<ProjectMetaData> {
       packIconPath: data.packIconPath.present
           ? data.packIconPath.value
           : this.packIconPath,
+      conflictPriority: data.conflictPriority.present
+          ? data.conflictPriority.value
+          : this.conflictPriority,
       togglesJson: data.togglesJson.present
           ? data.togglesJson.value
           : this.togglesJson,
@@ -622,6 +661,7 @@ class ProjectMetaData extends DataClass implements Insertable<ProjectMetaData> {
           ..write('mcVersion: $mcVersion, ')
           ..write('packIconMode: $packIconMode, ')
           ..write('packIconPath: $packIconPath, ')
+          ..write('conflictPriority: $conflictPriority, ')
           ..write('togglesJson: $togglesJson')
           ..write(')'))
         .toString();
@@ -643,6 +683,7 @@ class ProjectMetaData extends DataClass implements Insertable<ProjectMetaData> {
     mcVersion,
     packIconMode,
     packIconPath,
+    conflictPriority,
     togglesJson,
   );
   @override
@@ -663,6 +704,7 @@ class ProjectMetaData extends DataClass implements Insertable<ProjectMetaData> {
           other.mcVersion == this.mcVersion &&
           other.packIconMode == this.packIconMode &&
           other.packIconPath == this.packIconPath &&
+          other.conflictPriority == this.conflictPriority &&
           other.togglesJson == this.togglesJson);
 }
 
@@ -681,6 +723,7 @@ class ProjectMetaCompanion extends UpdateCompanion<ProjectMetaData> {
   final Value<String> mcVersion;
   final Value<String> packIconMode;
   final Value<String?> packIconPath;
+  final Value<String> conflictPriority;
   final Value<String> togglesJson;
   const ProjectMetaCompanion({
     this.id = const Value.absent(),
@@ -697,6 +740,7 @@ class ProjectMetaCompanion extends UpdateCompanion<ProjectMetaData> {
     this.mcVersion = const Value.absent(),
     this.packIconMode = const Value.absent(),
     this.packIconPath = const Value.absent(),
+    this.conflictPriority = const Value.absent(),
     this.togglesJson = const Value.absent(),
   });
   ProjectMetaCompanion.insert({
@@ -714,6 +758,7 @@ class ProjectMetaCompanion extends UpdateCompanion<ProjectMetaData> {
     this.mcVersion = const Value.absent(),
     this.packIconMode = const Value.absent(),
     this.packIconPath = const Value.absent(),
+    this.conflictPriority = const Value.absent(),
     this.togglesJson = const Value.absent(),
   }) : name = Value(name),
        schemaVersion = Value(schemaVersion),
@@ -735,6 +780,7 @@ class ProjectMetaCompanion extends UpdateCompanion<ProjectMetaData> {
     Expression<String>? mcVersion,
     Expression<String>? packIconMode,
     Expression<String>? packIconPath,
+    Expression<String>? conflictPriority,
     Expression<String>? togglesJson,
   }) {
     return RawValuesInsertable({
@@ -752,6 +798,7 @@ class ProjectMetaCompanion extends UpdateCompanion<ProjectMetaData> {
       if (mcVersion != null) 'mc_version': mcVersion,
       if (packIconMode != null) 'pack_icon_mode': packIconMode,
       if (packIconPath != null) 'pack_icon_path': packIconPath,
+      if (conflictPriority != null) 'conflict_priority': conflictPriority,
       if (togglesJson != null) 'toggles_json': togglesJson,
     });
   }
@@ -771,6 +818,7 @@ class ProjectMetaCompanion extends UpdateCompanion<ProjectMetaData> {
     Value<String>? mcVersion,
     Value<String>? packIconMode,
     Value<String?>? packIconPath,
+    Value<String>? conflictPriority,
     Value<String>? togglesJson,
   }) {
     return ProjectMetaCompanion(
@@ -788,6 +836,7 @@ class ProjectMetaCompanion extends UpdateCompanion<ProjectMetaData> {
       mcVersion: mcVersion ?? this.mcVersion,
       packIconMode: packIconMode ?? this.packIconMode,
       packIconPath: packIconPath ?? this.packIconPath,
+      conflictPriority: conflictPriority ?? this.conflictPriority,
       togglesJson: togglesJson ?? this.togglesJson,
     );
   }
@@ -837,6 +886,9 @@ class ProjectMetaCompanion extends UpdateCompanion<ProjectMetaData> {
     if (packIconPath.present) {
       map['pack_icon_path'] = Variable<String>(packIconPath.value);
     }
+    if (conflictPriority.present) {
+      map['conflict_priority'] = Variable<String>(conflictPriority.value);
+    }
     if (togglesJson.present) {
       map['toggles_json'] = Variable<String>(togglesJson.value);
     }
@@ -860,6 +912,7 @@ class ProjectMetaCompanion extends UpdateCompanion<ProjectMetaData> {
           ..write('mcVersion: $mcVersion, ')
           ..write('packIconMode: $packIconMode, ')
           ..write('packIconPath: $packIconPath, ')
+          ..write('conflictPriority: $conflictPriority, ')
           ..write('togglesJson: $togglesJson')
           ..write(')'))
         .toString();
@@ -3576,6 +3629,17 @@ class $ConflictsTable extends Conflicts
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _suggestedEntryIdMeta = const VerificationMeta(
+    'suggestedEntryId',
+  );
+  @override
+  late final GeneratedColumn<String> suggestedEntryId = GeneratedColumn<String>(
+    'suggested_entry_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _resolvedEntryIdMeta = const VerificationMeta(
     'resolvedEntryId',
   );
@@ -3608,6 +3672,7 @@ class $ConflictsTable extends Conflicts
     namespaceName,
     key,
     participantsJson,
+    suggestedEntryId,
     resolvedEntryId,
     resolved,
   ];
@@ -3658,6 +3723,15 @@ class $ConflictsTable extends Conflicts
     } else if (isInserting) {
       context.missing(_participantsJsonMeta);
     }
+    if (data.containsKey('suggested_entry_id')) {
+      context.handle(
+        _suggestedEntryIdMeta,
+        suggestedEntryId.isAcceptableOrUnknown(
+          data['suggested_entry_id']!,
+          _suggestedEntryIdMeta,
+        ),
+      );
+    }
     if (data.containsKey('resolved_entry_id')) {
       context.handle(
         _resolvedEntryIdMeta,
@@ -3698,6 +3772,10 @@ class $ConflictsTable extends Conflicts
         DriftSqlType.string,
         data['${effectivePrefix}participants_json'],
       )!,
+      suggestedEntryId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}suggested_entry_id'],
+      ),
       resolvedEntryId: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}resolved_entry_id'],
@@ -3720,6 +3798,10 @@ class Conflict extends DataClass implements Insertable<Conflict> {
   final String namespaceName;
   final String key;
   final String participantsJson;
+
+  /// What the conflict priority setting highlights. A suggestion only — it is
+  /// never promoted to [resolvedEntryId] without the user confirming (AC-8.5).
+  final String? suggestedEntryId;
   final String? resolvedEntryId;
   final bool resolved;
   const Conflict({
@@ -3727,6 +3809,7 @@ class Conflict extends DataClass implements Insertable<Conflict> {
     required this.namespaceName,
     required this.key,
     required this.participantsJson,
+    this.suggestedEntryId,
     this.resolvedEntryId,
     required this.resolved,
   });
@@ -3737,6 +3820,9 @@ class Conflict extends DataClass implements Insertable<Conflict> {
     map['namespace_name'] = Variable<String>(namespaceName);
     map['key'] = Variable<String>(key);
     map['participants_json'] = Variable<String>(participantsJson);
+    if (!nullToAbsent || suggestedEntryId != null) {
+      map['suggested_entry_id'] = Variable<String>(suggestedEntryId);
+    }
     if (!nullToAbsent || resolvedEntryId != null) {
       map['resolved_entry_id'] = Variable<String>(resolvedEntryId);
     }
@@ -3750,6 +3836,9 @@ class Conflict extends DataClass implements Insertable<Conflict> {
       namespaceName: Value(namespaceName),
       key: Value(key),
       participantsJson: Value(participantsJson),
+      suggestedEntryId: suggestedEntryId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(suggestedEntryId),
       resolvedEntryId: resolvedEntryId == null && nullToAbsent
           ? const Value.absent()
           : Value(resolvedEntryId),
@@ -3767,6 +3856,7 @@ class Conflict extends DataClass implements Insertable<Conflict> {
       namespaceName: serializer.fromJson<String>(json['namespaceName']),
       key: serializer.fromJson<String>(json['key']),
       participantsJson: serializer.fromJson<String>(json['participantsJson']),
+      suggestedEntryId: serializer.fromJson<String?>(json['suggestedEntryId']),
       resolvedEntryId: serializer.fromJson<String?>(json['resolvedEntryId']),
       resolved: serializer.fromJson<bool>(json['resolved']),
     );
@@ -3779,6 +3869,7 @@ class Conflict extends DataClass implements Insertable<Conflict> {
       'namespaceName': serializer.toJson<String>(namespaceName),
       'key': serializer.toJson<String>(key),
       'participantsJson': serializer.toJson<String>(participantsJson),
+      'suggestedEntryId': serializer.toJson<String?>(suggestedEntryId),
       'resolvedEntryId': serializer.toJson<String?>(resolvedEntryId),
       'resolved': serializer.toJson<bool>(resolved),
     };
@@ -3789,6 +3880,7 @@ class Conflict extends DataClass implements Insertable<Conflict> {
     String? namespaceName,
     String? key,
     String? participantsJson,
+    Value<String?> suggestedEntryId = const Value.absent(),
     Value<String?> resolvedEntryId = const Value.absent(),
     bool? resolved,
   }) => Conflict(
@@ -3796,6 +3888,9 @@ class Conflict extends DataClass implements Insertable<Conflict> {
     namespaceName: namespaceName ?? this.namespaceName,
     key: key ?? this.key,
     participantsJson: participantsJson ?? this.participantsJson,
+    suggestedEntryId: suggestedEntryId.present
+        ? suggestedEntryId.value
+        : this.suggestedEntryId,
     resolvedEntryId: resolvedEntryId.present
         ? resolvedEntryId.value
         : this.resolvedEntryId,
@@ -3811,6 +3906,9 @@ class Conflict extends DataClass implements Insertable<Conflict> {
       participantsJson: data.participantsJson.present
           ? data.participantsJson.value
           : this.participantsJson,
+      suggestedEntryId: data.suggestedEntryId.present
+          ? data.suggestedEntryId.value
+          : this.suggestedEntryId,
       resolvedEntryId: data.resolvedEntryId.present
           ? data.resolvedEntryId.value
           : this.resolvedEntryId,
@@ -3825,6 +3923,7 @@ class Conflict extends DataClass implements Insertable<Conflict> {
           ..write('namespaceName: $namespaceName, ')
           ..write('key: $key, ')
           ..write('participantsJson: $participantsJson, ')
+          ..write('suggestedEntryId: $suggestedEntryId, ')
           ..write('resolvedEntryId: $resolvedEntryId, ')
           ..write('resolved: $resolved')
           ..write(')'))
@@ -3837,6 +3936,7 @@ class Conflict extends DataClass implements Insertable<Conflict> {
     namespaceName,
     key,
     participantsJson,
+    suggestedEntryId,
     resolvedEntryId,
     resolved,
   );
@@ -3848,6 +3948,7 @@ class Conflict extends DataClass implements Insertable<Conflict> {
           other.namespaceName == this.namespaceName &&
           other.key == this.key &&
           other.participantsJson == this.participantsJson &&
+          other.suggestedEntryId == this.suggestedEntryId &&
           other.resolvedEntryId == this.resolvedEntryId &&
           other.resolved == this.resolved);
 }
@@ -3857,6 +3958,7 @@ class ConflictsCompanion extends UpdateCompanion<Conflict> {
   final Value<String> namespaceName;
   final Value<String> key;
   final Value<String> participantsJson;
+  final Value<String?> suggestedEntryId;
   final Value<String?> resolvedEntryId;
   final Value<bool> resolved;
   final Value<int> rowid;
@@ -3865,6 +3967,7 @@ class ConflictsCompanion extends UpdateCompanion<Conflict> {
     this.namespaceName = const Value.absent(),
     this.key = const Value.absent(),
     this.participantsJson = const Value.absent(),
+    this.suggestedEntryId = const Value.absent(),
     this.resolvedEntryId = const Value.absent(),
     this.resolved = const Value.absent(),
     this.rowid = const Value.absent(),
@@ -3874,6 +3977,7 @@ class ConflictsCompanion extends UpdateCompanion<Conflict> {
     required String namespaceName,
     required String key,
     required String participantsJson,
+    this.suggestedEntryId = const Value.absent(),
     this.resolvedEntryId = const Value.absent(),
     this.resolved = const Value.absent(),
     this.rowid = const Value.absent(),
@@ -3886,6 +3990,7 @@ class ConflictsCompanion extends UpdateCompanion<Conflict> {
     Expression<String>? namespaceName,
     Expression<String>? key,
     Expression<String>? participantsJson,
+    Expression<String>? suggestedEntryId,
     Expression<String>? resolvedEntryId,
     Expression<bool>? resolved,
     Expression<int>? rowid,
@@ -3895,6 +4000,7 @@ class ConflictsCompanion extends UpdateCompanion<Conflict> {
       if (namespaceName != null) 'namespace_name': namespaceName,
       if (key != null) 'key': key,
       if (participantsJson != null) 'participants_json': participantsJson,
+      if (suggestedEntryId != null) 'suggested_entry_id': suggestedEntryId,
       if (resolvedEntryId != null) 'resolved_entry_id': resolvedEntryId,
       if (resolved != null) 'resolved': resolved,
       if (rowid != null) 'rowid': rowid,
@@ -3906,6 +4012,7 @@ class ConflictsCompanion extends UpdateCompanion<Conflict> {
     Value<String>? namespaceName,
     Value<String>? key,
     Value<String>? participantsJson,
+    Value<String?>? suggestedEntryId,
     Value<String?>? resolvedEntryId,
     Value<bool>? resolved,
     Value<int>? rowid,
@@ -3915,6 +4022,7 @@ class ConflictsCompanion extends UpdateCompanion<Conflict> {
       namespaceName: namespaceName ?? this.namespaceName,
       key: key ?? this.key,
       participantsJson: participantsJson ?? this.participantsJson,
+      suggestedEntryId: suggestedEntryId ?? this.suggestedEntryId,
       resolvedEntryId: resolvedEntryId ?? this.resolvedEntryId,
       resolved: resolved ?? this.resolved,
       rowid: rowid ?? this.rowid,
@@ -3936,6 +4044,9 @@ class ConflictsCompanion extends UpdateCompanion<Conflict> {
     if (participantsJson.present) {
       map['participants_json'] = Variable<String>(participantsJson.value);
     }
+    if (suggestedEntryId.present) {
+      map['suggested_entry_id'] = Variable<String>(suggestedEntryId.value);
+    }
     if (resolvedEntryId.present) {
       map['resolved_entry_id'] = Variable<String>(resolvedEntryId.value);
     }
@@ -3955,6 +4066,7 @@ class ConflictsCompanion extends UpdateCompanion<Conflict> {
           ..write('namespaceName: $namespaceName, ')
           ..write('key: $key, ')
           ..write('participantsJson: $participantsJson, ')
+          ..write('suggestedEntryId: $suggestedEntryId, ')
           ..write('resolvedEntryId: $resolvedEntryId, ')
           ..write('resolved: $resolved, ')
           ..write('rowid: $rowid')
@@ -5078,6 +5190,7 @@ typedef $$ProjectMetaTableCreateCompanionBuilder =
       Value<String> mcVersion,
       Value<String> packIconMode,
       Value<String?> packIconPath,
+      Value<String> conflictPriority,
       Value<String> togglesJson,
     });
 typedef $$ProjectMetaTableUpdateCompanionBuilder =
@@ -5096,6 +5209,7 @@ typedef $$ProjectMetaTableUpdateCompanionBuilder =
       Value<String> mcVersion,
       Value<String> packIconMode,
       Value<String?> packIconPath,
+      Value<String> conflictPriority,
       Value<String> togglesJson,
     });
 
@@ -5175,6 +5289,11 @@ class $$ProjectMetaTableFilterComposer
 
   ColumnFilters<String> get packIconPath => $composableBuilder(
     column: $table.packIconPath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get conflictPriority => $composableBuilder(
+    column: $table.conflictPriority,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -5263,6 +5382,11 @@ class $$ProjectMetaTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get conflictPriority => $composableBuilder(
+    column: $table.conflictPriority,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get togglesJson => $composableBuilder(
     column: $table.togglesJson,
     builder: (column) => ColumnOrderings(column),
@@ -5336,6 +5460,11 @@ class $$ProjectMetaTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get conflictPriority => $composableBuilder(
+    column: $table.conflictPriority,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<String> get togglesJson => $composableBuilder(
     column: $table.togglesJson,
     builder: (column) => column,
@@ -5387,6 +5516,7 @@ class $$ProjectMetaTableTableManager
                 Value<String> mcVersion = const Value.absent(),
                 Value<String> packIconMode = const Value.absent(),
                 Value<String?> packIconPath = const Value.absent(),
+                Value<String> conflictPriority = const Value.absent(),
                 Value<String> togglesJson = const Value.absent(),
               }) => ProjectMetaCompanion(
                 id: id,
@@ -5403,6 +5533,7 @@ class $$ProjectMetaTableTableManager
                 mcVersion: mcVersion,
                 packIconMode: packIconMode,
                 packIconPath: packIconPath,
+                conflictPriority: conflictPriority,
                 togglesJson: togglesJson,
               ),
           createCompanionCallback:
@@ -5421,6 +5552,7 @@ class $$ProjectMetaTableTableManager
                 Value<String> mcVersion = const Value.absent(),
                 Value<String> packIconMode = const Value.absent(),
                 Value<String?> packIconPath = const Value.absent(),
+                Value<String> conflictPriority = const Value.absent(),
                 Value<String> togglesJson = const Value.absent(),
               }) => ProjectMetaCompanion.insert(
                 id: id,
@@ -5437,6 +5569,7 @@ class $$ProjectMetaTableTableManager
                 mcVersion: mcVersion,
                 packIconMode: packIconMode,
                 packIconPath: packIconPath,
+                conflictPriority: conflictPriority,
                 togglesJson: togglesJson,
               ),
           withReferenceMapper: (p0) => p0
@@ -7390,6 +7523,7 @@ typedef $$ConflictsTableCreateCompanionBuilder =
       required String namespaceName,
       required String key,
       required String participantsJson,
+      Value<String?> suggestedEntryId,
       Value<String?> resolvedEntryId,
       Value<bool> resolved,
       Value<int> rowid,
@@ -7400,6 +7534,7 @@ typedef $$ConflictsTableUpdateCompanionBuilder =
       Value<String> namespaceName,
       Value<String> key,
       Value<String> participantsJson,
+      Value<String?> suggestedEntryId,
       Value<String?> resolvedEntryId,
       Value<bool> resolved,
       Value<int> rowid,
@@ -7431,6 +7566,11 @@ class $$ConflictsTableFilterComposer
 
   ColumnFilters<String> get participantsJson => $composableBuilder(
     column: $table.participantsJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get suggestedEntryId => $composableBuilder(
+    column: $table.suggestedEntryId,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -7474,6 +7614,11 @@ class $$ConflictsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get suggestedEntryId => $composableBuilder(
+    column: $table.suggestedEntryId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get resolvedEntryId => $composableBuilder(
     column: $table.resolvedEntryId,
     builder: (column) => ColumnOrderings(column),
@@ -7507,6 +7652,11 @@ class $$ConflictsTableAnnotationComposer
 
   GeneratedColumn<String> get participantsJson => $composableBuilder(
     column: $table.participantsJson,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get suggestedEntryId => $composableBuilder(
+    column: $table.suggestedEntryId,
     builder: (column) => column,
   );
 
@@ -7551,6 +7701,7 @@ class $$ConflictsTableTableManager
                 Value<String> namespaceName = const Value.absent(),
                 Value<String> key = const Value.absent(),
                 Value<String> participantsJson = const Value.absent(),
+                Value<String?> suggestedEntryId = const Value.absent(),
                 Value<String?> resolvedEntryId = const Value.absent(),
                 Value<bool> resolved = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
@@ -7559,6 +7710,7 @@ class $$ConflictsTableTableManager
                 namespaceName: namespaceName,
                 key: key,
                 participantsJson: participantsJson,
+                suggestedEntryId: suggestedEntryId,
                 resolvedEntryId: resolvedEntryId,
                 resolved: resolved,
                 rowid: rowid,
@@ -7569,6 +7721,7 @@ class $$ConflictsTableTableManager
                 required String namespaceName,
                 required String key,
                 required String participantsJson,
+                Value<String?> suggestedEntryId = const Value.absent(),
                 Value<String?> resolvedEntryId = const Value.absent(),
                 Value<bool> resolved = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
@@ -7577,6 +7730,7 @@ class $$ConflictsTableTableManager
                 namespaceName: namespaceName,
                 key: key,
                 participantsJson: participantsJson,
+                suggestedEntryId: suggestedEntryId,
                 resolvedEntryId: resolvedEntryId,
                 resolved: resolved,
                 rowid: rowid,

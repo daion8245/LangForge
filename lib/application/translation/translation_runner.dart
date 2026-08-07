@@ -26,6 +26,7 @@ import '../../domain/cache/cache_key.dart';
 import '../../infrastructure/cache/cache_hashes.dart';
 import '../../infrastructure/cache/translation_cache_store.dart';
 import '../../infrastructure/db/app_database.dart';
+import '../../infrastructure/platform/memory_budget.dart';
 import '../../infrastructure/glossary/glossary_store.dart';
 import '../../infrastructure/normalize/unicode_text_normalizer.dart';
 
@@ -136,7 +137,10 @@ class TranslationRunner {
   static const Duration progressInterval = Duration(milliseconds: 100);
 
   /// Rows written per database batch (AGENTS.md 5.6).
-  static const int flushChunkSize = 1000;
+  ///
+  /// A phone flushes in smaller chunks: the pending list and the transaction
+  /// buffer are both live at once (MOBILE.md 1.2).
+  static int get flushChunkSize => MemoryBudget.flushChunkSize;
 
   /// Consecutive network failures before the run pauses itself.
   static const int networkFailurePauseThreshold = 3;
@@ -471,9 +475,13 @@ class TranslationRunner {
       }
     }
 
+    // Each in-flight request holds a body, a response buffer and a retry slot,
+    // so the provider's own ceiling is capped again on a phone (MOBILE.md 1.2).
     final workerCount = queue.isEmpty
         ? 1
-        : _provider.limits.maxConcurrentRequests.clamp(1, queue.length);
+        : MemoryBudget.maxConcurrentRequests(
+            _provider.limits.maxConcurrentRequests,
+          ).clamp(1, queue.length);
     await Future.wait(List.generate(workerCount, (_) => worker()));
 
     await _flushDB(pending);
